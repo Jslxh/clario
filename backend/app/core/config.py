@@ -23,16 +23,24 @@ class Settings(BaseSettings):
     # Relational Database Settings (PostgreSQL)
     DATABASE_URL: str = "postgresql+psycopg://clario_user:clario_password@localhost:5432/clario_db"
 
-    # Vector Database Settings (Qdrant)
+    # Vector Database & Embedding Settings (Phase 5)
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION_NAME: str = "clario_documents"
-    EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"  # Produces 384-dimensional dense vectors
+    EMBEDDING_MODEL_NAME: str = "BAAI/bge-small-en-v1.5"  # Locked 384-dimensional model
+    EMBEDDING_DIMENSION: int = 384
+    EMBEDDING_BATCH_SIZE: int = 32
+    EMBEDDING_DEVICE: str = "auto"
     QDRANT_VECTOR_SIZE: int = 384
 
     # Document Storage & Upload Limits (Phase 2B)
     STORAGE_DIR: str = "storage"
     MAX_UPLOAD_SIZE_BYTES: int = 52428800  # 50 MB max limit
     ALLOWED_EXTENSIONS: Set[str] = {"pdf", "docx", "txt"}
+
+    # Document Chunking Configuration (Phase 4)
+    CHUNK_SIZE: int = 500         # Target size in tokens (~2000 chars)
+    CHUNK_OVERLAP: int = 75       # Overlap size in tokens (~300 chars)
+    CHARS_PER_TOKEN: float = 4.0   # Isolated token estimation multiplier
 
     # Security & Authentication Placeholder
     JWT_SECRET: str = "default-jwt-secret-key-change-in-production"

@@ -8,10 +8,12 @@ class QdrantVectorPayload(BaseModel):
     
     document_id: str = Field(..., description="UUID string of parent document")
     chunk_id: str = Field(..., description="UUID string of specific document chunk")
-    page_number: Optional[int] = Field(None, description="Page number where chunk originates")
+    page_number: Optional[int] = Field(None, description="Start page number where chunk originates")
+    end_page: Optional[int] = Field(None, description="End page number for cross-page chunk")
     section: Optional[str] = Field(None, description="Section heading or document location")
     department: Optional[str] = Field(None, description="Department authorization scope")
     document_type: str = Field(..., description="File extension or document type (e.g. pdf, docx)")
     access_level: str = Field("internal", description="Document access classification level")
+    filename: Optional[str] = Field(None, description="Original uploaded filename")
 
     model_config = ConfigDict(from_attributes=True)

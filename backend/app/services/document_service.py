@@ -177,5 +177,84 @@ class DocumentService:
             document_type=doc_record.document_type,
         )
 
+    def process_document(self, db: Session, document_id: str) -> Document:
+        """Process document end-to-end: UPLOADED -> PROCESSING -> Parse -> Chunk -> Index -> READY / FAILED."""
+        from app.services.chunking.service import chunking_service
+        from app.services.indexing_service import indexing_service
+
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid document UUID: {document_id}",
+            ) from err
+
+        doc_record = db.query(Document).filter(Document.id == doc_uuid).first()
+        if not doc_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with ID '{document_id}' not found.",
+            )
+
+        # 1. Transition status to PROCESSING
+        doc_record.status = DocumentStatus.PROCESSING
+        db.commit()
+        db.refresh(doc_record)
+
+        try:
+            # 2. Check original file existence
+            if not self.storage.file_exists(doc_record.file_path):
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"Original document file missing at '{doc_record.file_path}'.",
+                )
+
+            # 3. Parse document file
+            parsed_doc = ParserFactory.parse_document(
+                file_path=doc_record.file_path,
+                document_id=str(doc_record.id),
+                filename=doc_record.filename,
+                document_type=doc_record.document_type,
+            )
+
+            # 4. Chunk document
+            chunks = chunking_service.chunk_document(parsed_doc)
+
+            # 5. Persist chunks to PostgreSQL (idempotent replacement)
+            chunking_service.persist_chunks(db, document_id, chunks)
+
+            # 6. Generate embeddings & upsert vectors to Qdrant (idempotent point replacement)
+            indexing_service.index_document_chunks(db, document_id)
+
+            # 7. Transition status to READY
+            doc_record.status = DocumentStatus.READY
+            db.commit()
+            db.refresh(doc_record)
+
+            logger.info(f"Successfully processed document {document_id} to status READY.")
+            return doc_record
+
+        except Exception as err:
+            db.rollback()
+            # Update status to FAILED
+            try:
+                failed_doc = db.query(Document).filter(Document.id == doc_uuid).first()
+                if failed_doc:
+                    failed_doc.status = DocumentStatus.FAILED
+                    db.commit()
+            except Exception as db_err:
+                logger.error(f"Failed to update document status to FAILED: {db_err}")
+
+            if isinstance(err, HTTPException):
+                raise err
+            logger.error(f"Document processing failed for {document_id}: {err}")
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Document processing failed: {str(err)}",
+            ) from err
+
+
 
 document_service = DocumentService()
+

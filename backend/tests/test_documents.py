@@ -178,3 +178,89 @@ def test_11_health_endpoint_still_works():
     data = response.json()
     assert data["status"] == "healthy"
     assert data["service"] == "clario-backend"
+
+
+def test_12_process_document_end_to_end_and_idempotency():
+    """12. Test end-to-end POST /api/v1/documents/{id}/process and idempotency."""
+    txt_content = b"Clario Knowledge Base Section 1: Overview\n\nClario enables enterprise teams to upload and search internal documents."
+    upload_res = client.post(
+        "/api/v1/documents/upload",
+        files={"file": ("kb_doc.txt", txt_content, "text/plain")},
+        data={"title": "KB Document", "department": "Engineering"},
+    )
+    assert upload_res.status_code == 201
+    doc_id = upload_res.json()["id"]
+
+    # 1. Process document
+    proc_res1 = client.post(f"/api/v1/documents/{doc_id}/process")
+    assert proc_res1.status_code == 200
+    data1 = proc_res1.json()
+    assert data1["status"] == "ready"
+
+    # Verify chunks in DB
+    with SessionLocal() as db:
+        from app.models.document_chunk import DocumentChunk
+        chunks1 = db.query(DocumentChunk).filter(DocumentChunk.document_id == uuid.UUID(doc_id)).all()
+        assert len(chunks1) > 0
+        chunk_count1 = len(chunks1)
+
+    # 2. Process document second time (Idempotency check)
+    proc_res2 = client.post(f"/api/v1/documents/{doc_id}/process")
+    assert proc_res2.status_code == 200
+    data2 = proc_res2.json()
+    assert data2["status"] == "ready"
+
+    # Verify DB chunk count was not duplicated
+    with SessionLocal() as db:
+        from app.models.document_chunk import DocumentChunk
+        chunks2 = db.query(DocumentChunk).filter(DocumentChunk.document_id == uuid.UUID(doc_id)).all()
+        assert len(chunks2) == chunk_count1
+
+        # Cleanup DB doc record
+        doc_rec = db.query(Document).filter(Document.id == uuid.UUID(doc_id)).first()
+        if doc_rec:
+            db.delete(doc_rec)
+            db.commit()
+
+    file_storage_service.delete_file_directory(doc_id)
+
+
+def test_13_process_document_invalid_and_failed_states():
+    """13. Test invalid UUID, non-existent doc, and FAILED status transition."""
+    # 1. Invalid UUID
+    res_inv = client.post("/api/v1/documents/invalid-uuid/process")
+    assert res_inv.status_code == 400
+
+    # 2. Non-existent document
+    random_id = str(uuid.uuid4())
+    res_404 = client.post(f"/api/v1/documents/{random_id}/process")
+    assert res_404.status_code == 404
+
+    # 3. Document record exists but file is missing -> FAILED status transition
+    with SessionLocal() as db:
+        doc_uuid = uuid.uuid4()
+        fake_doc = Document(
+            id=doc_uuid,
+            filename="missing.pdf",
+            title="Missing File Doc",
+            document_type="pdf",
+            file_path="storage/documents/non_existent_file.pdf",
+            file_size=100,
+            status=DocumentStatus.UPLOADED,
+        )
+        db.add(fake_doc)
+        db.commit()
+
+    res_fail = client.post(f"/api/v1/documents/{doc_uuid}/process")
+    assert res_fail.status_code in (404, 500)
+
+    # Verify document status in DB updated to FAILED
+    with SessionLocal() as db:
+        doc_check = db.query(Document).filter(Document.id == doc_uuid).first()
+        assert doc_check is not None
+        assert doc_check.status == DocumentStatus.FAILED
+
+        # Cleanup
+        db.delete(doc_check)
+        db.commit()
+

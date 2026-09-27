@@ -33,3 +33,18 @@ async def upload_document(
         access_level=access_level,
     )
     return doc_record
+
+
+@router.post(
+    "/{document_id}/process",
+    response_model=DocumentRead,
+    status_code=status.HTTP_200_OK,
+    summary="Process Enterprise Document",
+    description="Trigger end-to-end parsing, chunking, embedding generation, and Qdrant vector indexing for a document.",
+)
+def process_document(
+    document_id: str,
+    db: Session = Depends(get_db),
+):
+    return document_service.process_document(db=db, document_id=document_id)
+

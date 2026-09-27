@@ -36,6 +36,12 @@ class DocumentChunk(Base):
     page_number: Mapped[Optional[int]] = mapped_column(
         Integer,
         nullable=True,
+        comment="Start page number of chunk",
+    )
+    end_page: Mapped[Optional[int]] = mapped_column(
+        Integer,
+        nullable=True,
+        comment="End page number of chunk",
     )
     section: Mapped[Optional[str]] = mapped_column(
         String(255),
