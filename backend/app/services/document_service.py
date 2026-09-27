@@ -6,7 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.core.config import settings
 from app.models.document import Document, DocumentStatus
-from app.services.file_storage import file_storage_service, LocalFileStorageService
+from app.services.file_storage import file_storage_service
+from app.services.parsers.factory import ParserFactory
+from app.schemas.parser import ParsedDocument
 
 logger = logging.getLogger(__name__)
 
@@ -24,7 +26,7 @@ MIME_MAPPINGS = {
 
 
 class DocumentService:
-    """Service handling document upload validation, file persistence, and database record creation."""
+    """Service handling document upload validation, file persistence, database registration, and parsing."""
 
     def __init__(self, storage=None):
         self.storage = storage or file_storage_service
@@ -124,7 +126,7 @@ class DocumentService:
                 file_path=stored_file_path,
                 file_size=file_size,
                 status=DocumentStatus.UPLOADED,
-                uploaded_by=None,  # Auth not implemented yet in Phase 2B
+                uploaded_by=None,
             )
             db.add(doc_record)
             db.commit()
@@ -135,7 +137,6 @@ class DocumentService:
 
         except Exception as err:
             db.rollback()
-            # Clean up orphaned storage file if DB write failed
             if doc_id_str:
                 self.storage.delete_file_directory(doc_id_str)
             if isinstance(err, HTTPException):
@@ -145,6 +146,36 @@ class DocumentService:
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail="Database or file storage error occurred while processing document.",
             ) from err
+
+    def parse_document(self, db: Session, document_id: str) -> ParsedDocument:
+        """Retrieve document record from DB and parse file content into normalized representation."""
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid document UUID: {document_id}",
+            ) from err
+
+        doc_record = db.query(Document).filter(Document.id == doc_uuid).first()
+        if not doc_record:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with ID '{document_id}' not found.",
+            )
+
+        if not self.storage.file_exists(doc_record.file_path):
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Original document file missing at '{doc_record.file_path}'.",
+            )
+
+        return ParserFactory.parse_document(
+            file_path=doc_record.file_path,
+            document_id=str(doc_record.id),
+            filename=doc_record.filename,
+            document_type=doc_record.document_type,
+        )
 
 
 document_service = DocumentService()
