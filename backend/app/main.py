@@ -29,8 +29,8 @@ app.add_middleware(
     summary="Health check endpoint",
     tags=["Health"],
 )
-async def root_health():
-    return await get_health()
+async def root_health(verbose: bool = False):
+    return await get_health(verbose=verbose)
 
 
 # Include API Routers under /api/v1
