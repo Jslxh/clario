@@ -1,6 +1,5 @@
-from typing import List, Union
+from typing import List
 from pydantic_settings import BaseSettings, SettingsConfigDict
-from pydantic import AnyHttpUrl, field_validator
 
 
 class Settings(BaseSettings):
@@ -21,17 +20,27 @@ class Settings(BaseSettings):
         "http://localhost:3000",
     ]
 
-    # Database Settings (PostgreSQL)
-    DATABASE_URL: str = "postgresql://clario_user:clario_password@localhost:5432/clario_db"
+    # Relational Database Settings (PostgreSQL)
+    DATABASE_URL: str = "postgresql+psycopg://clario_user:clario_password@localhost:5432/clario_db"
 
-    # Vector DB Settings (Qdrant)
+    # Vector Database Settings (Qdrant)
     QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_COLLECTION_NAME: str = "clario_documents"
+    QDRANT_VECTOR_SIZE: int = 384
 
     # Security & Authentication Placeholder
     JWT_SECRET: str = "default-jwt-secret-key-change-in-production"
 
     # AI & LLM Placeholder
     LLM_API_KEY: str = "default-llm-api-key"
+
+    @property
+    def sqlalchemy_database_url(self) -> str:
+        """Ensure standard SQLAlchemy postgresql+psycopg driver URL format."""
+        url = self.DATABASE_URL
+        if url.startswith("postgresql://"):
+            return url.replace("postgresql://", "postgresql+psycopg://", 1)
+        return url
 
     model_config = SettingsConfigDict(
         env_file=".env",
