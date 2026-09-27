@@ -1,39 +1,53 @@
 import uuid
 import pytest
-from sqlalchemy import select, text
+from sqlalchemy import select, text, inspect
 from sqlalchemy.orm import Session
 
 from app.core.database import SessionLocal, engine
-from app.models.user import User, Role
-from app.models.document import Document, DocumentChunk, DocumentStatus
-from app.models.audit import AuditLog
+from app.db.base import Base
+from app.models import User, Role, user_roles, Document, DocumentChunk, DocumentStatus, AuditLog
 from app.services.vector_service import vector_service
 from app.schemas.vector import QdrantVectorPayload
 
 
-def test_postgresql_connection():
-    """Verify raw PostgreSQL database connectivity."""
+def test_1_postgresql_connection():
+    """1. Verify raw PostgreSQL database connectivity."""
     with SessionLocal() as db:
         result = db.execute(text("SELECT 1")).scalar()
         assert result == 1
 
 
-def test_database_models_and_foreign_keys():
-    """Verify table creation, inserts, and foreign key relationships."""
+def test_2_sqlalchemy_model_metadata_loading():
+    """2. Verify SQLAlchemy 2.x metadata and model classes load cleanly."""
+    table_names = set(Base.metadata.tables.keys())
+    expected_tables = {"users", "roles", "user_roles", "documents", "document_chunks", "audit_logs"}
+    assert expected_tables.issubset(table_names), f"Missing tables in metadata: {expected_tables - table_names}"
+
+
+def test_3_required_tables_exist_in_database():
+    """3 & 4. Verify Alembic migration created all six required tables in PostgreSQL."""
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+    required_tables = {"users", "roles", "user_roles", "documents", "document_chunks", "audit_logs"}
+    assert required_tables.issubset(existing_tables), f"Database missing tables: {required_tables - existing_tables}"
+
+
+def test_4_foreign_key_relationships_and_constraints():
+    """5. Verify foreign-key relationships, unique constraints, and cascade operations."""
     with SessionLocal() as db:
         # Create test Role
         role = Role(
-            name=f"test_role_{uuid.uuid4().hex[:6]}",
-            description="Test engineering role",
+            name=f"test_admin_{uuid.uuid4().hex[:6]}",
+            description="System Administrator Test Role",
         )
         db.add(role)
         db.flush()
 
         # Create test User
         user = User(
-            email=f"user_{uuid.uuid4().hex[:6]}@clario.ai",
-            name="Alice Test",
-            password_hash="pbkdf2_sha256_hash_value",
+            email=f"temp_user_{uuid.uuid4().hex[:6]}@clario.internal",
+            name="Test Engineer",
+            password_hash="hashed_secret_123",
             department="Engineering",
             is_active=True,
         )
@@ -41,38 +55,38 @@ def test_database_models_and_foreign_keys():
         db.add(user)
         db.flush()
 
-        # Create test Document associated with User
+        # Create test Document
         doc = Document(
-            filename="q3_architecture.pdf",
-            title="Q3 System Architecture Plan",
+            filename="architecture.pdf",
+            title="System Architecture Specification",
             document_type="pdf",
             department="Engineering",
             access_level="internal",
-            file_path="/storage/docs/q3_architecture.pdf",
-            file_size=1048576,
+            file_path="/storage/architecture.pdf",
+            file_size=2048576,
             status=DocumentStatus.UPLOADED,
             uploaded_by=user.id,
         )
         db.add(doc)
         db.flush()
 
-        # Create test DocumentChunk associated with Document
+        # Create test DocumentChunk
         chunk = DocumentChunk(
             document_id=doc.id,
             chunk_index=0,
-            content="Vector DB schema design for enterprise knowledge base.",
+            content="Enterprise RAG database schema and index configuration.",
             page_number=1,
-            section="Executive Summary",
+            section="Database Foundation",
         )
         db.add(chunk)
 
-        # Create test AuditLog associated with User
+        # Create test AuditLog
         audit = AuditLog(
             user_id=user.id,
-            action="DOCUMENT_UPLOAD",
+            action="SCHEMA_VERIFICATION",
             resource_type="document",
             resource_id=str(doc.id),
-            details={"filename": doc.filename, "size": doc.file_size},
+            details={"phase": "2A", "status": "verified"},
         )
         db.add(audit)
 
@@ -86,38 +100,43 @@ def test_database_models_and_foreign_keys():
         assert queried_user.roles[0].name == role.name
 
         assert len(queried_user.documents) == 1
-        assert queried_user.documents[0].title == "Q3 System Architecture Plan"
+        assert queried_user.documents[0].title == "System Architecture Specification"
 
         assert len(queried_user.documents[0].chunks) == 1
         assert queried_user.documents[0].chunks[0].chunk_index == 0
-        assert "Vector DB" in queried_user.documents[0].chunks[0].content
+        assert "Enterprise RAG" in queried_user.documents[0].chunks[0].content
 
         assert len(queried_user.audit_logs) == 1
-        assert queried_user.audit_logs[0].action == "DOCUMENT_UPLOAD"
+        assert queried_user.audit_logs[0].action == "SCHEMA_VERIFICATION"
 
-        # Cleanup test data
-        db.delete(user)  # Cascades to documents, chunks; sets null on audit log
+        # Cleanup test record
+        db.delete(user)
         db.delete(role)
         db.delete(audit)
         db.commit()
 
 
-def test_qdrant_service_abstraction():
-    """Verify Qdrant client payload validation and connectivity service abstraction."""
-    payload_data = {
+def test_5_qdrant_connectivity():
+    """6. Verify Qdrant vector engine connectivity."""
+    assert vector_service.check_health() is True, "Qdrant vector database is unreachable."
+
+
+def test_6_qdrant_clario_documents_collection_existence():
+    """7. Verify clario_documents collection exists in Qdrant."""
+    assert vector_service.ensure_collection_exists() is True, "Failed to initialize clario_documents collection."
+
+
+def test_7_qdrant_payload_schema_validation():
+    """Verify Qdrant vector metadata payload schema."""
+    payload_dict = {
         "document_id": str(uuid.uuid4()),
         "chunk_id": str(uuid.uuid4()),
-        "page_number": 2,
-        "section": "Data Model",
+        "page_number": 3,
+        "section": "Vector Engine",
         "department": "Engineering",
         "document_type": "pdf",
         "access_level": "internal",
     }
-    validated_payload = vector_service.validate_payload(payload_data)
-    assert validated_payload.document_type == "pdf"
-    assert validated_payload.access_level == "internal"
-
-    # Test Qdrant connectivity if container is running
-    is_healthy = vector_service.check_health()
-    if is_healthy:
-        assert vector_service.ensure_collection_exists() is True
+    validated = vector_service.validate_payload(payload_dict)
+    assert validated.document_type == "pdf"
+    assert validated.access_level == "internal"

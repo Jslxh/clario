@@ -1,8 +1,8 @@
-"""Initial schema setup
+"""Initial core database schema setup
 
-Revision ID: 5831ab234e05
+Revision ID: 439da9f4d286
 Revises: 
-Create Date: 2026-09-27 18:41:23.754662
+Create Date: 2026-09-27 20:52:17.420885
 
 """
 from typing import Sequence, Union
@@ -12,7 +12,7 @@ import sqlalchemy as sa
 from sqlalchemy.dialects import postgresql
 
 # revision identifiers, used by Alembic.
-revision: str = '5831ab234e05'
+revision: str = '439da9f4d286'
 down_revision: Union[str, Sequence[str], None] = None
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
@@ -53,6 +53,7 @@ def upgrade() -> None:
     sa.PrimaryKeyConstraint('id')
     )
     op.create_index(op.f('ix_audit_logs_action'), 'audit_logs', ['action'], unique=False)
+    op.create_index(op.f('ix_audit_logs_created_at'), 'audit_logs', ['created_at'], unique=False)
     op.create_index(op.f('ix_audit_logs_resource_type'), 'audit_logs', ['resource_type'], unique=False)
     op.create_index(op.f('ix_audit_logs_user_id'), 'audit_logs', ['user_id'], unique=False)
     op.create_table('documents',
@@ -92,7 +93,8 @@ def upgrade() -> None:
     sa.Column('section', sa.String(length=255), nullable=True),
     sa.Column('created_at', sa.DateTime(timezone=True), server_default=sa.text('now()'), nullable=False),
     sa.ForeignKeyConstraint(['document_id'], ['documents.id'], ondelete='CASCADE'),
-    sa.PrimaryKeyConstraint('id')
+    sa.PrimaryKeyConstraint('id'),
+    sa.UniqueConstraint('document_id', 'chunk_index', name='uq_document_chunk_index')
     )
     op.create_index(op.f('ix_document_chunks_document_id'), 'document_chunks', ['document_id'], unique=False)
     # ### end Alembic commands ###
@@ -112,6 +114,7 @@ def downgrade() -> None:
     op.drop_table('documents')
     op.drop_index(op.f('ix_audit_logs_user_id'), table_name='audit_logs')
     op.drop_index(op.f('ix_audit_logs_resource_type'), table_name='audit_logs')
+    op.drop_index(op.f('ix_audit_logs_created_at'), table_name='audit_logs')
     op.drop_index(op.f('ix_audit_logs_action'), table_name='audit_logs')
     op.drop_table('audit_logs')
     op.drop_index(op.f('ix_users_email'), table_name='users')
