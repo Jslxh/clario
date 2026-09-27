@@ -1,4 +1,4 @@
-from typing import List
+from typing import List, Set
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -26,7 +26,13 @@ class Settings(BaseSettings):
     # Vector Database Settings (Qdrant)
     QDRANT_URL: str = "http://localhost:6333"
     QDRANT_COLLECTION_NAME: str = "clario_documents"
+    EMBEDDING_MODEL_NAME: str = "all-MiniLM-L6-v2"  # Produces 384-dimensional dense vectors
     QDRANT_VECTOR_SIZE: int = 384
+
+    # Document Storage & Upload Limits (Phase 2B)
+    STORAGE_DIR: str = "storage"
+    MAX_UPLOAD_SIZE_BYTES: int = 52428800  # 50 MB max limit
+    ALLOWED_EXTENSIONS: Set[str] = {"pdf", "docx", "txt"}
 
     # Security & Authentication Placeholder
     JWT_SECRET: str = "default-jwt-secret-key-change-in-production"
