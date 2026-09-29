@@ -93,5 +93,74 @@ class QdrantVectorStore(BaseVectorStore):
     def upsert_vectors(self, points: List[Dict[str, Any]]) -> bool:
         return self.upsert_chunk_vectors(points)
 
+    def search_vectors(
+        self,
+        query_vector: List[float],
+        top_k: int = 5,
+        filters: Optional[Dict[str, Any]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Execute similarity search against Qdrant collection with optional payload filtering.
+        
+        Args:
+            query_vector: 384-dimensional normalized vector.
+            top_k: Max candidate results to return.
+            filters: Optional payload filter key-value pairs (department, document_type, access_level, document_id).
+            
+        Returns:
+            List of dicts: [{"point_id": str, "score": float, "payload": dict}]
+        """
+        if len(query_vector) != self.expected_dimension:
+            err_msg = (
+                f"Query vector dimension mismatch: expected {self.expected_dimension}, "
+                f"got {len(query_vector)}"
+            )
+            logger.error(err_msg)
+            raise ValueError(err_msg)
+
+        if top_k <= 0:
+            raise ValueError(f"top_k must be a positive integer > 0, got {top_k}")
+
+        self.verify_collection()
+        client = self._get_client()
+
+        qdrant_filter: Optional[qmodels.Filter] = None
+        if filters:
+            must_conditions = []
+            for key, val in filters.items():
+                if val is not None:
+                    must_conditions.append(
+                        qmodels.FieldCondition(
+                            key=key,
+                            match=qmodels.MatchValue(value=str(val)),
+                        )
+                    )
+            if must_conditions:
+                qdrant_filter = qmodels.Filter(must=must_conditions)
+
+        try:
+            response = client.query_points(
+                collection_name=self.collection_name,
+                query=query_vector,
+                query_filter=qdrant_filter,
+                limit=top_k,
+            )
+            search_results = response.points if hasattr(response, "points") else response
+        except Exception as err:
+            logger.error(f"Qdrant vector search failed: {err}")
+            raise RuntimeError(f"Qdrant search failure: {err}") from err
+
+
+        results: List[Dict[str, Any]] = []
+        for point in search_results:
+            results.append({
+                "point_id": str(point.id),
+                "score": float(point.score),
+                "payload": point.payload or {},
+            })
+
+        logger.info(f"Qdrant search returned {len(results)} matches for query.")
+        return results
+
 
 qdrant_vector_store = QdrantVectorStore()
+

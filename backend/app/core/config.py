@@ -32,6 +32,11 @@ class Settings(BaseSettings):
     EMBEDDING_DEVICE: str = "auto"
     QDRANT_VECTOR_SIZE: int = 384
 
+    # Retrieval Configuration (Phase 6)
+    RETRIEVAL_TOP_K: int = 5
+    RETRIEVAL_MAX_TOP_K: int = 100
+
+
     # Document Storage & Upload Limits (Phase 2B)
     STORAGE_DIR: str = "storage"
     MAX_UPLOAD_SIZE_BYTES: int = 52428800  # 50 MB max limit
