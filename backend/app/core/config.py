@@ -32,9 +32,12 @@ class Settings(BaseSettings):
     EMBEDDING_DEVICE: str = "auto"
     QDRANT_VECTOR_SIZE: int = 384
 
-    # Retrieval Configuration (Phase 6)
+    # Retrieval & Hybrid Search Configuration (Phase 6 & 7)
     RETRIEVAL_TOP_K: int = 5
     RETRIEVAL_MAX_TOP_K: int = 100
+    RRF_K: int = 60                       # Reciprocal Rank Fusion smoothing constant
+    DEFAULT_RETRIEVAL_MODE: str = "hybrid" # Options: "hybrid", "semantic", "bm25"
+
 
 
     # Document Storage & Upload Limits (Phase 2B)

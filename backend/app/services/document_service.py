@@ -222,21 +222,49 @@ class DocumentService:
             chunks = chunking_service.chunk_document(parsed_doc)
 
             # 5. Persist chunks to PostgreSQL (idempotent replacement)
-            chunking_service.persist_chunks(db, document_id, chunks)
+            persisted_chunks = chunking_service.persist_chunks(db, document_id, chunks)
 
             # 6. Generate embeddings & upsert vectors to Qdrant (idempotent point replacement)
             indexing_service.index_document_chunks(db, document_id)
 
-            # 7. Transition status to READY
+            # 7. Transition status to READY and commit database transaction
             doc_record.status = DocumentStatus.READY
             db.commit()
             db.refresh(doc_record)
 
+            # 8. Synchronize in-memory BM25 index post-commit (non-fatal auxiliary cache)
+            try:
+                from app.services.retrieval.bm25_index import bm25_index
+                bm25_index.index_document_chunks(
+                    document_id=document_id,
+                    chunks=persisted_chunks,
+                    document=doc_record,
+                )
+            except Exception as bm25_err:
+                logger.warning(
+                    f"Post-commit BM25 in-memory sync failed for document {document_id}: {bm25_err}. "
+                    "Marking BM25 index uninitialized so it will rebuild from PostgreSQL on next query."
+                )
+                try:
+                    from app.services.retrieval.bm25_index import bm25_index
+                    bm25_index.invalidate()
+                except Exception:
+                    pass
+
             logger.info(f"Successfully processed document {document_id} to status READY.")
             return doc_record
 
+
+
         except Exception as err:
             db.rollback()
+            # Ensure failed document chunks are evicted from BM25 index to maintain consistency
+            try:
+                from app.services.retrieval.bm25_index import bm25_index
+                bm25_index.remove_document(document_id)
+            except Exception as bm25_err:
+                logger.error(f"Failed to evict document {document_id} from BM25 on failure: {bm25_err}")
+
             # Update status to FAILED
             try:
                 failed_doc = db.query(Document).filter(Document.id == doc_uuid).first()
@@ -250,6 +278,7 @@ class DocumentService:
                 raise err
             logger.error(f"Document processing failed for {document_id}: {err}")
             raise HTTPException(
+
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Document processing failed: {str(err)}",
             ) from err

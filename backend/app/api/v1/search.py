@@ -6,7 +6,7 @@ from app.core.database import get_db
 from app.services.retrieval import (
     SearchRequest,
     SearchResponse,
-    semantic_retriever,
+    hybrid_retriever,
 )
 
 logger = logging.getLogger(__name__)
@@ -18,12 +18,13 @@ router = APIRouter(tags=["Search"])
     "",
     response_model=SearchResponse,
     status_code=status.HTTP_200_OK,
-    summary="Semantic Document Chunk Search",
+    summary="Hybrid Enterprise Document Search",
     description=(
-        "Perform vector similarity search over enterprise document chunks using BGE embeddings. "
-        "Returns top-K candidate chunks hydrated with canonical content from PostgreSQL. "
-        "Note: Similarity scores represent raw Cosine vector similarity, not confidence percentages or probabilities. "
-        "The current semantic search endpoint is a retrieval foundation and does not enforce an authorization boundary. "
+        "Perform hybrid retrieval over enterprise document chunks combining BGE semantic vector similarity, "
+        "BM25 keyword search, and Reciprocal Rank Fusion (RRF). "
+        "Supports configurable retrieval modes ('hybrid', 'semantic', 'bm25') with canonical content hydrated from PostgreSQL. "
+        "Note: Ranking scores represent RRF / similarity / keyword scores, not confidence percentages or probabilities. "
+        "The current search endpoint is a retrieval foundation and does not enforce an authorization boundary. "
         "Enterprise authorization and Role-Based Access Control (RBAC) will be added before production user access."
     ),
 )
@@ -32,11 +33,12 @@ def search_documents(
     db: Session = Depends(get_db),
 ):
     try:
-        return semantic_retriever.search(
+        return hybrid_retriever.search(
             db=db,
             query=request.query,
             top_k=request.top_k,
             filters=request.filters,
+            mode=request.mode,
         )
     except ValueError as err:
         raise HTTPException(
@@ -44,8 +46,9 @@ def search_documents(
             detail=str(err),
         ) from err
     except Exception as err:
-        logger.error(f"Semantic search failed: {err}")
+        logger.error(f"Hybrid retrieval failed: {err}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Internal server error during semantic retrieval.",
+            detail="Internal server error during document retrieval.",
         ) from err
+
