@@ -222,6 +222,16 @@ def test_12_process_document_end_to_end_and_idempotency():
             db.delete(doc_rec)
             db.commit()
 
+    try:
+        from app.services.vector_service import vector_service
+        from qdrant_client.models import PointIdsList
+        vector_service.get_client().delete(
+            collection_name=settings.QDRANT_COLLECTION_NAME,
+            points_selector=PointIdsList(points=[str(c.id) for c in chunks2]),
+        )
+    except Exception:
+        pass
+
     file_storage_service.delete_file_directory(doc_id)
 
 

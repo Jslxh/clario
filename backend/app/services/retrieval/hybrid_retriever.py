@@ -15,21 +15,24 @@ from app.services.retrieval.models import (
 from app.services.retrieval.semantic_retriever import SemanticRetriever, semantic_retriever
 from app.services.retrieval.bm25_index import BM25Index, bm25_index
 from app.services.retrieval.fusion import reciprocal_rank_fusion
+from app.services.reranking import BaseReranker, reranker_service
 
 logger = logging.getLogger(__name__)
 
 
 class HybridRetriever(BaseRetriever):
-    """Hybrid document retriever orchestrating semantic search, BM25 keyword search, and RRF fusion."""
+    """Hybrid document retriever orchestrating semantic search, BM25 keyword search, RRF fusion, and cross-encoder reranking."""
 
     def __init__(
         self,
         semantic: Optional[SemanticRetriever] = None,
         bm25: Optional[BM25Index] = None,
+        reranker: Optional[BaseReranker] = None,
         rrf_k: Optional[int] = None,
     ):
         self.semantic_retriever = semantic or semantic_retriever
         self.bm25_index = bm25 or bm25_index
+        self.reranker = reranker or reranker_service
         self.rrf_k = rrf_k or settings.RRF_K
 
     def _hydrate_results(
@@ -102,15 +105,17 @@ class HybridRetriever(BaseRetriever):
         top_k: Optional[int] = None,
         filters: Optional[SearchFilters] = None,
         mode: Optional[RetrievalMode] = None,
+        enable_rerank: Optional[bool] = None,
     ) -> SearchResponse:
-        """Execute search in hybrid, semantic-only, or BM25-only mode.
+        """Execute search in hybrid, semantic-only, or BM25-only mode with optional second-stage reranking.
         
         Args:
             db: Active SQLAlchemy database session.
             query: Non-empty query string.
-            top_k: Max candidate results to return (default 5, max 100).
+            top_k: Max final results to return (default 5, max 100).
             filters: Optional metadata filters (department, document_type, access_level, document_id).
             mode: Retrieval mode ('hybrid', 'semantic', 'bm25'). Defaults to config DEFAULT_RETRIEVAL_MODE.
+            enable_rerank: Whether to apply cross-encoder reranking (defaults to RERANKING_ENABLED).
             
         Returns:
             SearchResponse containing ranked and hydrated results.
@@ -138,55 +143,95 @@ class HybridRetriever(BaseRetriever):
             logger.error(err_msg)
             raise ValueError(err_msg)
 
-        # 3. Resolve Mode
+        # 3. Resolve Mode & Reranking Flag
         effective_mode = mode or RetrievalMode(settings.DEFAULT_RETRIEVAL_MODE)
+        is_rerank_active = (
+            enable_rerank
+            if enable_rerank is not None
+            else settings.RERANKING_ENABLED
+        )
+
+        # Sizing first-stage candidate pool: larger pool when reranking is active
+        first_stage_pool_k = (
+            max(effective_top_k * 4, settings.RERANKING_CANDIDATE_POOL_SIZE)
+            if is_rerank_active
+            else effective_top_k
+        )
 
         # Mode A: Semantic-Only Baseline
         if effective_mode == RetrievalMode.SEMANTIC:
-            resp = self.semantic_retriever.search(
-                db=db,
-                query=cleaned_query,
-                top_k=effective_top_k,
-                filters=filters,
+            filter_dict = filters.model_dump(exclude_none=True) if filters else None
+            query_vector = self.semantic_retriever.embedder.embed_query(cleaned_query)
+            semantic_matches = self.semantic_retriever.vector_store.search_vectors(
+                query_vector=query_vector,
+                top_k=first_stage_pool_k,
+                filters=filter_dict,
             )
-            resp.mode = "semantic"
-            return resp
+            hydrated = self._hydrate_results(db=db, candidate_matches=semantic_matches)
+
+            if is_rerank_active and hydrated:
+                final_results = self.reranker.rerank(
+                    query=cleaned_query,
+                    candidates=hydrated,
+                    top_k=effective_top_k,
+                )
+            else:
+                final_results = hydrated[:effective_top_k]
+
+            return SearchResponse(
+                query=cleaned_query,
+                mode="semantic",
+                total_results=len(final_results),
+                reranked=is_rerank_active and len(final_results) > 0,
+                results=final_results,
+            )
 
         # Mode B: BM25-Only Keyword Retrieval
         if effective_mode == RetrievalMode.BM25:
             self.bm25_index.ensure_initialized(db)
             bm25_candidates = self.bm25_index.search(
                 query=cleaned_query,
-                top_k=effective_top_k,
+                top_k=first_stage_pool_k,
                 filters=filters,
             )
-            results = self._hydrate_results(db=db, candidate_matches=bm25_candidates)
+            hydrated = self._hydrate_results(db=db, candidate_matches=bm25_candidates)
+
+            if is_rerank_active and hydrated:
+                final_results = self.reranker.rerank(
+                    query=cleaned_query,
+                    candidates=hydrated,
+                    top_k=effective_top_k,
+                )
+            else:
+                final_results = hydrated[:effective_top_k]
+
             return SearchResponse(
                 query=cleaned_query,
                 mode="bm25",
-                total_results=len(results),
-                results=results,
+                total_results=len(final_results),
+                reranked=is_rerank_active and len(final_results) > 0,
+                results=final_results,
             )
 
         # Mode C: Hybrid Retrieval (Semantic + BM25 + Reciprocal Rank Fusion)
         self.bm25_index.ensure_initialized(db)
 
-        # Retrieve candidates from both sources (pool larger than top_k for optimal fusion depth)
-        candidate_pool_size = max(effective_top_k * 2, 20)
+        # Retrieve candidates from both sources (pool larger than first-stage k for optimal fusion depth)
+        fusion_source_pool_size = max(first_stage_pool_k * 2, 20)
 
         # 1. Semantic candidates
         filter_dict = filters.model_dump(exclude_none=True) if filters else None
         query_vector = self.semantic_retriever.embedder.embed_query(cleaned_query)
         semantic_matches = self.semantic_retriever.vector_store.search_vectors(
             query_vector=query_vector,
-            top_k=candidate_pool_size,
+            top_k=fusion_source_pool_size,
             filters=filter_dict,
         )
 
         # 2. BM25 keyword candidates
         bm25_matches = self.bm25_index.search(
             query=cleaned_query,
-            top_k=candidate_pool_size,
+            top_k=fusion_source_pool_size,
             filters=filters,
         )
 
@@ -197,7 +242,7 @@ class HybridRetriever(BaseRetriever):
                 "bm25": bm25_matches,
             },
             k=self.rrf_k,
-            top_k=effective_top_k,
+            top_k=first_stage_pool_k,
         )
 
         fused_dicts = [
@@ -210,16 +255,27 @@ class HybridRetriever(BaseRetriever):
         ]
 
         # 4. PostgreSQL Single-Query Hydration
-        results = self._hydrate_results(db=db, candidate_matches=fused_dicts)
+        hydrated = self._hydrate_results(db=db, candidate_matches=fused_dicts)
+
+        # 5. Second-Stage Cross-Encoder Reranking
+        if is_rerank_active and hydrated:
+            final_results = self.reranker.rerank(
+                query=cleaned_query,
+                candidates=hydrated,
+                top_k=effective_top_k,
+            )
+        else:
+            final_results = hydrated[:effective_top_k]
 
         logger.info(
-            f"Hybrid search returned {len(results)} fused candidate chunks for query: '{cleaned_query}'"
+            f"Hybrid search returned {len(final_results)} chunks (reranked={is_rerank_active}) for query: '{cleaned_query}'"
         )
         return SearchResponse(
             query=cleaned_query,
             mode="hybrid",
-            total_results=len(results),
-            results=results,
+            total_results=len(final_results),
+            reranked=is_rerank_active and len(final_results) > 0,
+            results=final_results,
         )
 
 

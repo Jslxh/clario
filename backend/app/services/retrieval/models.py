@@ -29,11 +29,11 @@ class RetrievalResult(BaseModel):
     """Structured search result for a single retrieved document chunk.
     
     The canonical content is hydrated directly from PostgreSQL, while score represents
-    either the RRF fusion score (in hybrid mode) or raw similarity/keyword score.
+    either the cross-encoder logit (if reranked), RRF score (in hybrid mode), or raw vector/keyword score.
     """
     chunk_id: str = Field(..., description="Unique UUID string of the document chunk")
     document_id: str = Field(..., description="Unique UUID string of the parent document")
-    score: float = Field(..., description="Ranking score (RRF score in hybrid mode, cosine similarity in semantic mode, BM25 score in BM25 mode; not a probability)")
+    score: float = Field(..., description="Ranking score (cross-encoder logit when reranked, RRF score in hybrid mode, cosine similarity in semantic mode, BM25 score in BM25 mode; not a probability)")
     content: str = Field(..., description="Canonical chunk text content retrieved from PostgreSQL")
     page_number: Optional[int] = Field(None, description="Starting page number within original document")
     end_page: Optional[int] = Field(None, description="Ending page number within original document")
@@ -42,6 +42,9 @@ class RetrievalResult(BaseModel):
     document_type: str = Field(..., description="Format/type of parent document")
     department: Optional[str] = Field(None, description="Department metadata tag")
     access_level: str = Field(..., description="Access level metadata tag")
+    initial_score: Optional[float] = Field(None, description="First-stage retrieval score before reranking")
+    initial_rank: Optional[int] = Field(None, description="First-stage 1-based rank position before reranking")
+    rerank_score: Optional[float] = Field(None, description="Cross-encoder relevance score after reranking")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -55,6 +58,10 @@ class SearchRequest(BaseModel):
         RetrievalMode.HYBRID,
         description="Retrieval mode: 'hybrid' (Semantic + BM25 + RRF), 'semantic' (Vector only), or 'bm25' (Keyword only). Default is 'hybrid'.",
     )
+    enable_rerank: Optional[bool] = Field(
+        None,
+        description="Whether to apply cross-encoder reranking over retrieved candidates (defaults to server configuration).",
+    )
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -64,6 +71,7 @@ class SearchResponse(BaseModel):
     query: str = Field(..., description="Cleaned search query text")
     mode: str = Field("hybrid", description="Active retrieval mode used ('hybrid', 'semantic', 'bm25')")
     total_results: int = Field(..., description="Total count of retrieved candidate chunks")
+    reranked: bool = Field(False, description="Whether cross-encoder reranking was applied to the results")
     results: List[RetrievalResult] = Field(..., description="List of retrieved candidate chunks ordered by ranking score")
 
     model_config = ConfigDict(from_attributes=True)

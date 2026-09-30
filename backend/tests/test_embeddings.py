@@ -127,6 +127,12 @@ def test_10_11_upsert_test_vector_and_payload_metadata():
     assert retrieved[0].payload["department"] == "Engineering"
     assert retrieved[0].payload["filename"] == "architecture.pdf"
 
+    from qdrant_client.models import PointIdsList
+    client.delete(
+        collection_name=settings.QDRANT_COLLECTION_NAME,
+        points_selector=PointIdsList(points=[test_chunk_id]),
+    )
+
 
 def test_12_reindexing_same_chunk_is_idempotent():
     """12. Verify re-indexing the same chunk updates existing point without duplication."""
@@ -166,6 +172,12 @@ def test_12_reindexing_same_chunk_is_idempotent():
     )
     assert len(retrieved) == 1  # No duplicate points created
     assert retrieved[0].payload["section"] == "Updated Section Title"
+
+    from qdrant_client.models import PointIdsList
+    client.delete(
+        collection_name=settings.QDRANT_COLLECTION_NAME,
+        points_selector=PointIdsList(points=[test_chunk_id]),
+    )
 
 
 def test_13_incorrect_vector_dimension_rejected():

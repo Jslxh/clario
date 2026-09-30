@@ -38,6 +38,14 @@ class Settings(BaseSettings):
     RRF_K: int = 60                       # Reciprocal Rank Fusion smoothing constant
     DEFAULT_RETRIEVAL_MODE: str = "hybrid" # Options: "hybrid", "semantic", "bm25"
 
+    # Cross-Encoder Reranking Configuration (Phase 8)
+    RERANKING_ENABLED: bool = True
+    RERANKING_MODEL_NAME: str = "cross-encoder/ms-marco-MiniLM-L-6-v2"
+    RERANKING_BATCH_SIZE: int = 32
+    RERANKING_DEVICE: str = "auto"
+    RERANKING_CANDIDATE_POOL_SIZE: int = 20
+    RERANKING_FALLBACK_ON_ERROR: bool = True
+
 
 
     # Document Storage & Upload Limits (Phase 2B)

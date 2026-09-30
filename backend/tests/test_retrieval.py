@@ -183,10 +183,11 @@ def seeded_test_dataset():
 
     try:
         from app.services.vector_service import vector_service
+        from qdrant_client.models import PointIdsList
         client_q = vector_service.get_client()
         client_q.delete(
             collection_name=settings.QDRANT_COLLECTION_NAME,
-            points_selector=[str(chunk_hr1_id), str(chunk_it1_id), str(chunk_sec1_id)],
+            points_selector=PointIdsList(points=[str(chunk_hr1_id), str(chunk_it1_id), str(chunk_sec1_id)]),
         )
     except Exception:
         pass
