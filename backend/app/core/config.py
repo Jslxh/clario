@@ -58,8 +58,10 @@ class Settings(BaseSettings):
     CHUNK_OVERLAP: int = 75       # Overlap size in tokens (~300 chars)
     CHARS_PER_TOKEN: float = 4.0   # Isolated token estimation multiplier
 
-    # Security & Authentication Placeholder
+    # Security & Authentication
     JWT_SECRET: str = "default-jwt-secret-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 60 * 24  # 24 hours
 
     # AI & LLM Provider Configuration (Phase 9)
     LLM_PROVIDER: str = "mock"             # Options: "mock", "openai", "azure", "ollama", "vllm"
@@ -72,6 +74,15 @@ class Settings(BaseSettings):
     LLM_MAX_OUTPUT_TOKENS: int = 1024
     LLM_CONTEXT_TOKEN_BUDGET: int = 4000
     LLM_MIN_RELEVANCE_SCORE: Optional[float] = None
+
+    # Grounding & Faithfulness Verification Configuration (Phase 10)
+    VERIFICATION_ENABLED: bool = False     # Default-off / opt-in
+    VERIFICATION_MODEL_NAME: str = "cross-encoder/nli-deberta-v3-small"
+    VERIFICATION_MAX_PAIRS: int = 20       # Global candidate-pair cap per query
+    VERIFICATION_BATCH_SIZE: int = 16
+    VERIFICATION_DEVICE: str = "auto"
+    VERIFICATION_ENTAILMENT_THRESHOLD: float = 0.65
+    VERIFICATION_CONTRADICTION_THRESHOLD: float = 0.55
 
     @property
     def sqlalchemy_database_url(self) -> str:

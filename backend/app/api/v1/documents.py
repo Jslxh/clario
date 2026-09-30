@@ -6,6 +6,9 @@ from app.core.database import get_db
 from app.schemas.document import DocumentRead
 from app.services.document_service import document_service
 
+from app.api.deps import get_current_user_optional
+from app.models.user import User
+
 router = APIRouter(prefix="/documents", tags=["Documents"])
 
 
@@ -23,6 +26,7 @@ async def upload_document(
     department: Optional[str] = Form(None),
     access_level: Optional[str] = Form("internal"),
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     doc_record = await document_service.upload_document(
         db=db,
@@ -31,6 +35,7 @@ async def upload_document(
         document_type=document_type,
         department=department,
         access_level=access_level,
+        uploaded_by=current_user.id if current_user else None,
     )
     return doc_record
 

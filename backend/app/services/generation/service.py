@@ -22,6 +22,9 @@ from app.schemas.generation import (
 logger = logging.getLogger(__name__)
 
 
+from app.services.verification import VerificationService, verification_service
+
+
 class GenerationService:
     """End-to-end Enterprise Question Answering and LLM Generation Service."""
 
@@ -30,10 +33,12 @@ class GenerationService:
         retriever: Optional[HybridRetriever] = None,
         context_engine: Optional[ContextBuilder] = None,
         provider: Optional[BaseLLMProvider] = None,
+        verifier: Optional[VerificationService] = None,
     ):
         self.retriever = retriever or hybrid_retriever
         self.context_builder = context_engine or context_builder
         self.llm_provider = provider or llm_provider
+        self.verifier = verifier or verification_service
 
     def _extract_and_map_citations(
         self,
@@ -108,8 +113,10 @@ class GenerationService:
         mode: Optional[RetrievalMode] = None,
         enable_rerank: Optional[bool] = None,
         max_output_tokens: Optional[int] = None,
+        verify: Optional[bool] = None,
+        user: Optional[Any] = None,
     ) -> GenerationResponse:
-        """Execute complete Q&A pipeline: Retrieval -> Context Assembly -> LLM Generation -> Citation Mapping."""
+        """Execute complete Q&A pipeline: Retrieval -> Context Assembly -> LLM Generation -> Citation Mapping -> Grounding Verification."""
         t0 = time.perf_counter()
 
         if not query or not query.strip():
@@ -119,6 +126,7 @@ class GenerationService:
         effective_top_k = top_k if top_k is not None else settings.RETRIEVAL_TOP_K
         effective_mode = mode or RetrievalMode(settings.DEFAULT_RETRIEVAL_MODE)
         effective_max_tokens = max_output_tokens or settings.LLM_MAX_OUTPUT_TOKENS
+        effective_verify = verify if verify is not None else settings.VERIFICATION_ENABLED
 
         # 1. First/Second-Stage Retrieval
         search_resp = self.retriever.search(
@@ -128,6 +136,7 @@ class GenerationService:
             filters=filters,
             mode=effective_mode,
             enable_rerank=enable_rerank,
+            user=user,
         )
 
         candidates = search_resp.results
@@ -141,6 +150,15 @@ class GenerationService:
         # 3. Short-Circuit Abstention on Empty/Insufficient Context
         if not built_context.has_sufficient_context or not built_context.context_chunks:
             latency_ms = (time.perf_counter() - t0) * 1000.0
+            verification_result = (
+                self.verifier.verify_generation(
+                    raw_answer="",
+                    context_chunks=[],
+                    has_sufficient_context=False,
+                )
+                if effective_verify
+                else None
+            )
             return GenerationResponse(
                 query=cleaned_query,
                 answer="I could not find sufficient information in the provided documentation to answer your question.",
@@ -150,6 +168,7 @@ class GenerationService:
                 retrieval_mode=effective_mode.value,
                 latency_ms=latency_ms,
                 token_usage={"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0},
+                verification=verification_result,
             )
 
         # 4. LLM Generation with Context Length Recovery
@@ -168,7 +187,16 @@ class GenerationService:
             gen_req.user_prompt = built_context.user_prompt
             llm_resp = self.llm_provider.generate(gen_req)
 
-        # 5. Citation Extraction and Validation Mapping
+        # 5. Optional Grounding & Faithfulness Verification on Raw LLM Output
+        verification_result = None
+        if effective_verify:
+            verification_result = self.verifier.verify_generation(
+                raw_answer=llm_resp.content,
+                context_chunks=built_context.context_chunks,
+                has_sufficient_context=built_context.has_sufficient_context,
+            )
+
+        # 6. Citation Extraction and Public Answer Sanitization
         cleaned_answer, citations = self._extract_and_map_citations(
             answer_text=llm_resp.content,
             supplied_chunks=built_context.context_chunks,
@@ -189,6 +217,7 @@ class GenerationService:
                 "completion_tokens": llm_resp.completion_tokens,
                 "total_tokens": llm_resp.total_tokens,
             },
+            verification=verification_result,
         )
 
 

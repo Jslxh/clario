@@ -2,6 +2,7 @@ from typing import Optional, List, Dict
 from pydantic import BaseModel, ConfigDict, Field
 
 from app.services.retrieval.models import SearchFilters, RetrievalMode
+from app.schemas.verification import VerificationResult
 
 
 class SourceCitation(BaseModel):
@@ -28,6 +29,7 @@ class GenerationRequest(BaseModel):
     mode: Optional[RetrievalMode] = Field(RetrievalMode.HYBRID, description="Retrieval mode: 'hybrid', 'semantic', 'bm25'")
     enable_rerank: Optional[bool] = Field(None, description="Whether to apply Cross-Encoder reranking")
     max_output_tokens: Optional[int] = Field(1024, ge=64, le=4096, description="Max tokens for LLM generation response")
+    verify: Optional[bool] = Field(None, description="Explicitly enable/disable grounding verification (overrides server default)")
 
     model_config = ConfigDict(from_attributes=True)
 
@@ -42,6 +44,7 @@ class GenerationResponse(BaseModel):
     retrieval_mode: str = Field(..., description="Retrieval mode used ('hybrid', 'semantic', 'bm25')")
     latency_ms: float = Field(..., description="Total pipeline latency in milliseconds")
     token_usage: Dict[str, int] = Field(..., description="Token counts: prompt_tokens, completion_tokens, total_tokens")
+    verification: Optional[VerificationResult] = Field(None, description="Faithfulness and grounding verification result (None when disabled)")
 
     model_config = ConfigDict(from_attributes=True)
 

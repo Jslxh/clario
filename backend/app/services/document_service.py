@@ -72,6 +72,7 @@ class DocumentService:
         document_type: Optional[str] = None,
         department: Optional[str] = None,
         access_level: Optional[str] = "internal",
+        uploaded_by: Optional[uuid.UUID] = None,
     ) -> Document:
         """Handle multipart file upload, storage, and database persistence."""
         filename = file.filename or "uploaded_file"
@@ -126,7 +127,7 @@ class DocumentService:
                 file_path=stored_file_path,
                 file_size=file_size,
                 status=DocumentStatus.UPLOADED,
-                uploaded_by=None,
+                uploaded_by=uploaded_by,
             )
             db.add(doc_record)
             db.commit()

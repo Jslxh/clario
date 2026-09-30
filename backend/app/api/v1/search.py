@@ -8,6 +8,8 @@ from app.services.retrieval import (
     SearchResponse,
     hybrid_retriever,
 )
+from app.api.deps import get_current_user_optional
+from app.models.user import User
 
 logger = logging.getLogger(__name__)
 
@@ -23,14 +25,13 @@ router = APIRouter(tags=["Search"])
         "Perform enterprise document search combining BGE semantic vector similarity, "
         "BM25 keyword search, Reciprocal Rank Fusion (RRF), and Cross-Encoder neural reranking. "
         "Supports configurable retrieval modes ('hybrid', 'semantic', 'bm25') and optional reranking toggle with canonical content hydrated from PostgreSQL. "
-        "Note: Ranking scores represent cross-encoder logits when reranked, RRF scores in hybrid mode, or similarity/keyword scores, not probabilities. "
-        "The current search endpoint is a retrieval foundation and does not enforce an authorization boundary. "
-        "Enterprise authorization and Role-Based Access Control (RBAC) will be added before production user access."
+        "Enforces document access permissions and department boundaries based on user identity."
     ),
 )
 def search_documents(
     request: SearchRequest,
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     try:
         return hybrid_retriever.search(
@@ -40,6 +41,7 @@ def search_documents(
             filters=request.filters,
             mode=request.mode,
             enable_rerank=request.enable_rerank,
+            user=current_user,
         )
     except ValueError as err:
         raise HTTPException(

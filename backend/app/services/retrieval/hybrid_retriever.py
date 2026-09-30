@@ -35,10 +35,38 @@ class HybridRetriever(BaseRetriever):
         self.reranker = reranker or reranker_service
         self.rrf_k = rrf_k or settings.RRF_K
 
+    def _is_user_authorized_for_doc(self, user: Any, doc: Optional[Any]) -> bool:
+        """Check if user has permission to view document based on role, access_level, and department."""
+        if not doc:
+            return False
+        user_roles = [r.name for r in getattr(user, "roles", [])]
+        if "admin" in user_roles:
+            return True
+
+        doc_access = (doc.access_level or "internal").lower()
+        doc_dept = doc.department
+        user_dept = getattr(user, "department", None)
+        user_id = getattr(user, "id", None)
+
+        if "analyst" in user_roles:
+            if doc_access in ["public", "internal", "confidential"]:
+                if doc_dept is None or doc_dept == user_dept or doc_access == "public":
+                    return True
+            return False
+
+        # Regular user role
+        if doc_access == "public":
+            return True
+        if doc_access == "internal":
+            if doc_dept is None or doc_dept == user_dept or (user_id and getattr(doc, "uploaded_by", None) == user_id):
+                return True
+        return False
+
     def _hydrate_results(
         self,
         db: Session,
         candidate_matches: List[Dict[str, Any]],
+        user: Optional[Any] = None,
     ) -> List[RetrievalResult]:
         """Perform single batched SQL query to hydrate canonical content and metadata for candidate chunk IDs."""
         if not candidate_matches:
@@ -80,6 +108,10 @@ class HybridRetriever(BaseRetriever):
                 continue
 
             doc = db_chunk.document
+            if user is not None and not self._is_user_authorized_for_doc(user, doc):
+                logger.debug(f"User unauthorized to view document chunk {point_id}. Excluded.")
+                continue
+
             results.append(
                 RetrievalResult(
                     chunk_id=str(db_chunk.id),
@@ -106,6 +138,7 @@ class HybridRetriever(BaseRetriever):
         filters: Optional[SearchFilters] = None,
         mode: Optional[RetrievalMode] = None,
         enable_rerank: Optional[bool] = None,
+        user: Optional[Any] = None,
     ) -> SearchResponse:
         """Execute search in hybrid, semantic-only, or BM25-only mode with optional second-stage reranking.
         
@@ -167,7 +200,7 @@ class HybridRetriever(BaseRetriever):
                 top_k=first_stage_pool_k,
                 filters=filter_dict,
             )
-            hydrated = self._hydrate_results(db=db, candidate_matches=semantic_matches)
+            hydrated = self._hydrate_results(db=db, candidate_matches=semantic_matches, user=user)
 
             if is_rerank_active and hydrated:
                 final_results = self.reranker.rerank(
@@ -194,7 +227,7 @@ class HybridRetriever(BaseRetriever):
                 top_k=first_stage_pool_k,
                 filters=filters,
             )
-            hydrated = self._hydrate_results(db=db, candidate_matches=bm25_candidates)
+            hydrated = self._hydrate_results(db=db, candidate_matches=bm25_candidates, user=user)
 
             if is_rerank_active and hydrated:
                 final_results = self.reranker.rerank(
@@ -255,7 +288,7 @@ class HybridRetriever(BaseRetriever):
         ]
 
         # 4. PostgreSQL Single-Query Hydration
-        hydrated = self._hydrate_results(db=db, candidate_matches=fused_dicts)
+        hydrated = self._hydrate_results(db=db, candidate_matches=fused_dicts, user=user)
 
         # 5. Second-Stage Cross-Encoder Reranking
         if is_rerank_active and hydrated:

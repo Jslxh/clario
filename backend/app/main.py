@@ -2,8 +2,13 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.core.database import Base, engine
 from app.api.router import api_router
 from app.api.v1.health import HealthCheckResponse, get_health
+import app.models  # noqa: F401 - ensure all models are registered
+
+# Ensure tables are registered
+Base.metadata.create_all(bind=engine)
 
 app = FastAPI(
     title=settings.PROJECT_NAME,

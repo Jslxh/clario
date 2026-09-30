@@ -5,6 +5,7 @@ from app.models.user import User, user_roles
 from app.models.document import Document, DocumentStatus
 from app.models.document_chunk import DocumentChunk
 from app.models.audit_log import AuditLog
+from app.models.conversation import Conversation, Message
 
 __all__ = [
     "Base",
@@ -20,4 +21,6 @@ __all__ = [
     "DocumentStatus",
     "DocumentChunk",
     "AuditLog",
+    "Conversation",
+    "Message",
 ]

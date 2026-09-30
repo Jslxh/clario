@@ -7,6 +7,9 @@ from app.schemas.generation import GenerationRequest, GenerationResponse
 from app.services.generation import generation_service
 from app.services.llm.openai_provider import AuthenticationError, LLMProviderError
 
+from app.api.deps import get_current_user_optional
+from app.models.user import User
+
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["Query & Generation"])
@@ -19,15 +22,14 @@ router = APIRouter(tags=["Query & Generation"])
     summary="Enterprise RAG Question Answering",
     description=(
         "Synthesize grounded enterprise answers from verified document context using hybrid retrieval, "
-        "Cross-Encoder reranking, and deterministic LLM generation. "
-        "Returns synthesized answer text, mapped source citations, and operational context indicators. "
-        "Note: This endpoint provides syntactic citation mappings and retrieval predicates; "
-        "factual NLI grounding validation and enterprise RBAC authorization boundaries are established in subsequent phases."
+        "Cross-Encoder reranking, deterministic LLM generation, and optional Grounding & Faithfulness Verification. "
+        "Enforces document access permissions and department boundaries based on user identity."
     ),
 )
 def query_documents(
     request: GenerationRequest,
     db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     try:
         return generation_service.answer_query(
@@ -38,6 +40,8 @@ def query_documents(
             mode=request.mode,
             enable_rerank=request.enable_rerank,
             max_output_tokens=request.max_output_tokens,
+            verify=request.verify,
+            user=current_user,
         )
     except ValueError as err:
         raise HTTPException(
