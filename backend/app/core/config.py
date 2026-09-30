@@ -1,4 +1,4 @@
-from typing import List, Set
+from typing import List, Set, Optional
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -61,8 +61,17 @@ class Settings(BaseSettings):
     # Security & Authentication Placeholder
     JWT_SECRET: str = "default-jwt-secret-key-change-in-production"
 
-    # AI & LLM Placeholder
-    LLM_API_KEY: str = "default-llm-api-key"
+    # AI & LLM Provider Configuration (Phase 9)
+    LLM_PROVIDER: str = "mock"             # Options: "mock", "openai", "azure", "ollama", "vllm"
+    LLM_MODEL_NAME: str = "gpt-4o-mini"
+    LLM_API_BASE_URL: Optional[str] = None
+    LLM_API_KEY: Optional[str] = None
+    LLM_TIMEOUT_SECONDS: float = 30.0
+    LLM_MAX_RETRIES: int = 2
+    LLM_TEMPERATURE: float = 0.0           # Fixed deterministic temperature for enterprise facts
+    LLM_MAX_OUTPUT_TOKENS: int = 1024
+    LLM_CONTEXT_TOKEN_BUDGET: int = 4000
+    LLM_MIN_RELEVANCE_SCORE: Optional[float] = None
 
     @property
     def sqlalchemy_database_url(self) -> str:
