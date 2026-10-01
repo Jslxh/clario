@@ -7,8 +7,12 @@ from app.api.router import api_router
 from app.api.v1.health import HealthCheckResponse, get_health
 import app.models  # noqa: F401 - ensure all models are registered
 
-# Ensure tables are registered
-Base.metadata.create_all(bind=engine)
+# Ensure tables are registered if database is reachable
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception as err:
+    import logging
+    logging.getLogger(__name__).warning(f"Database table initialization skipped: {err}")
 
 app = FastAPI(
     title=settings.PROJECT_NAME,
