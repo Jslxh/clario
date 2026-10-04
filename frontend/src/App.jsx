@@ -3,21 +3,35 @@ import { AuthProvider, useAuth } from './context/AuthContext';
 import { Login } from './components/Login';
 import { Register } from './components/Register';
 import { Dashboard } from './components/Dashboard';
+import { Documents } from './pages/Documents';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { AppLayout } from './components/layout/AppLayout';
 
 function AppContent() {
   const { isAuthenticated, isLoading } = useAuth();
+
+  // Auth screen view: 'login' | 'register'
   const [authView, setAuthView] = useState(() =>
     window.location.hash === '#register' ? 'register' : 'login'
+  );
+
+  // Authenticated workspace view: 'documents' (default) | 'dashboard'
+  const [workspaceView, setWorkspaceView] = useState(() =>
+    window.location.hash === '#dashboard' ? 'dashboard' : 'documents'
   );
 
   // Sync state with URL hash
   useEffect(() => {
     const handleHashChange = () => {
-      if (window.location.hash === '#register') {
+      const hash = window.location.hash;
+      if (hash === '#register') {
         setAuthView('register');
-      } else if (window.location.hash === '#login') {
+      } else if (hash === '#login') {
         setAuthView('login');
+      } else if (hash === '#dashboard') {
+        setWorkspaceView('dashboard');
+      } else if (hash === '#documents') {
+        setWorkspaceView('documents');
       }
     };
 
@@ -35,6 +49,11 @@ function AppContent() {
     setAuthView('login');
   };
 
+  const handleWorkspaceViewChange = (view) => {
+    window.location.hash = `#${view}`;
+    setWorkspaceView(view);
+  };
+
   if (isLoading) {
     return (
       <div className="auth-loading-screen">
@@ -50,7 +69,9 @@ function AppContent() {
   if (isAuthenticated) {
     return (
       <ProtectedRoute>
-        <Dashboard />
+        <AppLayout currentView={workspaceView} onViewChange={handleWorkspaceViewChange}>
+          {workspaceView === 'dashboard' ? <Dashboard /> : <Documents />}
+        </AppLayout>
       </ProtectedRoute>
     );
   }
