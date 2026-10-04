@@ -33,7 +33,7 @@ def query_documents(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     try:
-        return generation_service.answer_query(
+        response = generation_service.answer_query(
             db=db,
             query=request.query,
             top_k=request.top_k,
@@ -44,6 +44,26 @@ def query_documents(
             verify=request.verify,
             user=current_user,
         )
+        try:
+            from app.services.audit_service import audit_service
+            audit_service.log_event(
+                db=db,
+                action="query",
+                resource_type="generation",
+                user_id=getattr(current_user, "id", None),
+                details={
+                    "query": request.query,
+                    "model": response.model_name,
+                    "retrieval_mode": response.retrieval_mode,
+                    "citation_count": len(response.citations),
+                    "has_sufficient_context": response.has_sufficient_context,
+                },
+            )
+        except Exception as audit_err:
+            logger.warning(f"Failed to record query audit log: {audit_err}")
+
+        return response
+
     except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

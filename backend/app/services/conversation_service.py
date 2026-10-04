@@ -103,15 +103,23 @@ class ConversationService:
         db.add(user_msg)
         db.flush()
 
-        # 2. Execute RAG question answering pipeline enforcing user authorization
-        # We pass user to guarantee document access boundaries are respected
+        # Collect prior conversation history (excluding the current newly created user message)
+        prior_messages = [m for m in conv.messages if m.id != user_msg.id]
+        history = [
+            {"role": m.role, "content": m.content}
+            for m in prior_messages[-6:]  # limit to last 6 messages
+        ]
+
+        # 2. Execute RAG question answering pipeline enforcing user authorization and conversation history
         gen_resp = generation_service.answer_query(
             db=db,
             query=req.content.strip(),
             top_k=req.top_k,
             verify=req.verify,
             user=user,
+            history=history,
         )
+
 
         verification_status_str = None
         if gen_resp.verification:

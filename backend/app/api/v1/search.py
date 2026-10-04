@@ -35,7 +35,7 @@ def search_documents(
     current_user: Optional[User] = Depends(get_current_user_optional),
 ):
     try:
-        return hybrid_retriever.search(
+        results = hybrid_retriever.search(
             db=db,
             query=request.query,
             top_k=request.top_k,
@@ -44,6 +44,25 @@ def search_documents(
             enable_rerank=request.enable_rerank,
             user=current_user,
         )
+        try:
+            from app.services.audit_service import audit_service
+            audit_service.log_event(
+                db=db,
+                action="search",
+                resource_type="retrieval",
+                user_id=getattr(current_user, "id", None),
+                details={
+                    "query": request.query,
+                    "mode": request.mode.value if request.mode else "hybrid",
+                    "top_k": request.top_k,
+                    "result_count": len(results.results),
+                },
+            )
+        except Exception as audit_err:
+            logger.warning(f"Failed to record search audit log: {audit_err}")
+
+        return results
+
     except ValueError as err:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,

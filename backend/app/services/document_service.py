@@ -1,6 +1,6 @@
 import uuid
 import logging
-from typing import Optional
+from typing import Optional, List, Tuple, Any
 from fastapi import UploadFile, HTTPException, status
 from sqlalchemy.orm import Session
 
@@ -133,8 +133,27 @@ class DocumentService:
             db.commit()
             db.refresh(doc_record)
 
+            try:
+                from app.services.audit_service import audit_service
+                audit_service.log_event(
+                    db=db,
+                    action="upload",
+                    resource_type="document",
+                    user_id=uploaded_by,
+                    resource_id=doc_id_str,
+                    details={
+                        "filename": sanitized_filename,
+                        "file_size": file_size,
+                        "department": department,
+                        "access_level": access_level,
+                    },
+                )
+            except Exception as audit_err:
+                logger.warning(f"Failed to record upload audit log: {audit_err}")
+
             logger.info(f"Successfully uploaded and registered document {doc_id_str}")
             return doc_record
+
 
         except Exception as err:
             db.rollback()
@@ -171,12 +190,112 @@ class DocumentService:
                 detail=f"Original document file missing at '{doc_record.file_path}'.",
             )
 
+        local_path = self.storage.get_local_filepath(doc_record.file_path)
         return ParserFactory.parse_document(
-            file_path=doc_record.file_path,
+            file_path=local_path,
             document_id=str(doc_record.id),
             filename=doc_record.filename,
             document_type=doc_record.document_type,
         )
+
+    def process_document_background(self, document_id: str) -> None:
+        """Background task handler for processing a document asynchronously via FastAPI BackgroundTasks."""
+        from app.core.database import SessionLocal
+        from app.services.chunking.service import chunking_service
+        from app.services.indexing_service import indexing_service
+        from app.services.retrieval.bm25_index import bm25_index
+        from app.services.audit_service import audit_service
+
+        logger.info(f"Starting background processing for document: {document_id}")
+        with SessionLocal() as db:
+            try:
+                doc_uuid = uuid.UUID(document_id)
+                doc_record = db.query(Document).filter(Document.id == doc_uuid).first()
+                if not doc_record:
+                    logger.error(f"Background task: Document {document_id} not found in database.")
+                    return
+
+                # Ensure status is PROCESSING
+                doc_record.status = DocumentStatus.PROCESSING
+                db.commit()
+
+                # Verify file existence via storage abstraction
+                if not self.storage.file_exists(doc_record.file_path):
+                    logger.error(f"Background task: Original document file missing at '{doc_record.file_path}'")
+                    doc_record.status = DocumentStatus.FAILED
+                    db.commit()
+                    return
+
+                # Parse document file using local path from storage
+                local_path = self.storage.get_local_filepath(doc_record.file_path)
+                parsed_doc = ParserFactory.parse_document(
+                    file_path=local_path,
+                    document_id=str(doc_record.id),
+                    filename=doc_record.filename,
+                    document_type=doc_record.document_type,
+                )
+
+                # Chunk document
+                chunks = chunking_service.chunk_document(parsed_doc)
+
+                # Persist chunks
+                persisted_chunks = chunking_service.persist_chunks(db, document_id, chunks)
+
+                # Index vectors in Qdrant
+                indexing_service.index_document_chunks(db, document_id)
+
+                # Transition to READY
+                doc_record.status = DocumentStatus.READY
+                db.commit()
+                db.refresh(doc_record)
+
+                # Synchronize in-memory BM25 index
+                try:
+                    bm25_index.index_document_chunks(
+                        document_id=document_id,
+                        chunks=persisted_chunks,
+                        document=doc_record,
+                    )
+                except Exception as bm25_err:
+                    logger.warning(f"Post-commit BM25 sync failed for {document_id}: {bm25_err}")
+                    try:
+                        bm25_index.invalidate()
+                    except Exception:
+                        pass
+
+                # Record audit log
+                try:
+                    audit_service.log_event(
+                        db=db,
+                        action="process",
+                        resource_type="document",
+                        user_id=doc_record.uploaded_by,
+                        resource_id=str(doc_record.id),
+                        details={
+                            "status": DocumentStatus.READY.value,
+                            "chunk_count": len(persisted_chunks),
+                        },
+                    )
+                except Exception as audit_err:
+                    logger.warning(f"Failed to record process audit log: {audit_err}")
+
+                logger.info(f"Background processing successfully finished for document {document_id}")
+
+            except Exception as err:
+                db.rollback()
+                logger.error(f"Background processing failed for document {document_id}: {err}")
+                try:
+                    bm25_index.remove_document(document_id)
+                except Exception:
+                    pass
+
+                try:
+                    failed_doc = db.query(Document).filter(Document.id == uuid.UUID(document_id)).first()
+                    if failed_doc:
+                        failed_doc.status = DocumentStatus.FAILED
+                        db.commit()
+                except Exception as db_err:
+                    logger.error(f"Failed to update document status to FAILED in background task: {db_err}")
 
     def process_document(self, db: Session, document_id: str) -> Document:
         """Process document end-to-end: UPLOADED -> PROCESSING -> Parse -> Chunk -> Index -> READY / FAILED."""
@@ -252,8 +371,25 @@ class DocumentService:
                 except Exception:
                     pass
 
+            try:
+                from app.services.audit_service import audit_service
+                audit_service.log_event(
+                    db=db,
+                    action="process",
+                    resource_type="document",
+                    user_id=doc_record.uploaded_by,
+                    resource_id=str(doc_record.id),
+                    details={
+                        "status": DocumentStatus.READY.value,
+                        "chunk_count": len(persisted_chunks),
+                    },
+                )
+            except Exception as audit_err:
+                logger.warning(f"Failed to record process audit log: {audit_err}")
+
             logger.info(f"Successfully processed document {document_id} to status READY.")
             return doc_record
+
 
 
 
@@ -279,12 +415,222 @@ class DocumentService:
                 raise err
             logger.error(f"Document processing failed for {document_id}: {err}")
             raise HTTPException(
-
                 status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Document processing failed: {str(err)}",
             ) from err
 
+    def is_user_authorized_for_doc(self, user: Optional[Any], doc: Optional[Document]) -> bool:
+        """Check if user has permission to access document based on role, access_level, and department."""
+        if not doc:
+            return False
+        doc_access = (doc.access_level or "internal").lower()
+        if user is None:
+            return doc_access == "public"
+
+        user_roles = [r.name for r in getattr(user, "roles", [])]
+        if "admin" in user_roles:
+            return True
+
+        doc_dept = doc.department
+        user_dept = getattr(user, "department", None)
+        user_id = getattr(user, "id", None)
+
+        if "analyst" in user_roles:
+            if doc_access in ["public", "internal", "confidential"]:
+                if doc_dept is None or doc_dept == user_dept or doc_access == "public":
+                    return True
+            return False
+
+        # Regular user role
+        if doc_access == "public":
+            return True
+        if doc_access == "internal":
+            if doc_dept is None or doc_dept == user_dept or (user_id and getattr(doc, "uploaded_by", None) == user_id):
+                return True
+        return False
+
+    def list_documents(
+        self,
+        db: Session,
+        user: Optional[Any] = None,
+        skip: int = 0,
+        limit: int = 50,
+        department: Optional[str] = None,
+        status: Optional[DocumentStatus] = None,
+        access_level: Optional[str] = None,
+    ) -> List[Document]:
+        """List documents with pagination, filters, and authorization rules."""
+        from sqlalchemy import or_, and_
+
+        query = db.query(Document)
+
+        # 1. Authorization filters
+        if user is None:
+            query = query.filter(Document.access_level == "public")
+        else:
+            user_roles = [r.name for r in getattr(user, "roles", [])]
+            user_dept = getattr(user, "department", None)
+            user_id = getattr(user, "id", None)
+
+            if "admin" in user_roles:
+                pass  # Admin can access all documents
+            elif "analyst" in user_roles:
+                cond = or_(
+                    Document.access_level == "public",
+                    and_(
+                        Document.access_level.in_(["internal", "confidential"]),
+                        or_(Document.department == None, Document.department == user_dept),
+                    ),
+                )
+                query = query.filter(cond)
+            else:
+                # Regular user
+                cond = or_(
+                    Document.access_level == "public",
+                    and_(
+                        Document.access_level == "internal",
+                        or_(
+                            Document.department == None,
+                            Document.department == user_dept,
+                            Document.uploaded_by == user_id if user_id else False,
+                        ),
+                    ),
+                    Document.uploaded_by == user_id if user_id else False,
+                )
+                query = query.filter(cond)
+
+        # 2. Query parameter filters
+        if department:
+            query = query.filter(Document.department == department)
+        if status:
+            query = query.filter(Document.status == status)
+        if access_level:
+            query = query.filter(Document.access_level == access_level.lower())
+
+        return (
+            query.order_by(Document.created_at.desc())
+            .offset(skip)
+            .limit(limit)
+            .all()
+        )
+
+    def get_document(
+        self,
+        db: Session,
+        document_id: str,
+        user: Optional[Any] = None,
+    ) -> Tuple[Document, int]:
+        """Retrieve single document metadata, validating existence and authorization, with chunk count."""
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid document UUID: {document_id}",
+            ) from err
+
+        doc = db.query(Document).filter(Document.id == doc_uuid).first()
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with ID '{document_id}' not found.",
+            )
+
+        if not self.is_user_authorized_for_doc(user, doc):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You do not have permission to view this document.",
+            )
+
+        from app.models.document_chunk import DocumentChunk
+        chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
+        return doc, chunk_count
+
+    def delete_document(
+        self,
+        db: Session,
+        document_id: str,
+        user: Optional[Any] = None,
+    ) -> bool:
+        """Delete document end-to-end: verify authorization, remove Qdrant vectors, BM25 index, file storage, and DB records."""
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid document UUID: {document_id}",
+            ) from err
+
+        doc = db.query(Document).filter(Document.id == doc_uuid).first()
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with ID '{document_id}' not found.",
+            )
+
+        # Authorization: require admin OR uploader
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Authentication required to delete documents.",
+            )
+
+        user_roles = [r.name for r in getattr(user, "roles", [])]
+        user_id = getattr(user, "id", None)
+        is_admin = "admin" in user_roles
+        is_uploader = user_id and doc.uploaded_by == user_id
+
+        if not (is_admin or is_uploader):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: Only administrators or the document uploader can delete this document.",
+            )
+
+        # 1. Delete vector points from Qdrant
+        try:
+            from app.services.vector_store import qdrant_vector_store
+            qdrant_vector_store.delete_vectors_by_document(document_id)
+        except Exception as qdrant_err:
+            logger.warning(f"Error removing vectors for document {document_id}: {qdrant_err}")
+
+        # 2. Remove from BM25 index
+        try:
+            from app.services.retrieval.bm25_index import bm25_index
+            bm25_index.remove_document(document_id)
+        except Exception as bm25_err:
+            logger.warning(f"Error removing document {document_id} from BM25: {bm25_err}")
+
+        # 3. Remove physical files from storage
+        try:
+            self.storage.delete_file_directory(document_id)
+        except Exception as file_err:
+            logger.warning(f"Error cleaning up storage for document {document_id}: {file_err}")
+
+        # 4. Delete document record (cascade deletes document_chunks)
+        db.delete(doc)
+        db.commit()
+
+        try:
+            from app.services.audit_service import audit_service
+            audit_service.log_event(
+                db=db,
+                action="delete",
+                resource_type="document",
+                user_id=getattr(user, "id", None),
+                resource_id=document_id,
+                details={
+                    "filename": doc.filename,
+                    "department": doc.department,
+                },
+            )
+        except Exception as audit_err:
+            logger.warning(f"Failed to record delete audit log: {audit_err}")
+
+        logger.info(f"Successfully deleted document {document_id}")
+        return True
+
 
 
 document_service = DocumentService()
+
 

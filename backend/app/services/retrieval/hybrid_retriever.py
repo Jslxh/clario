@@ -35,15 +35,20 @@ class HybridRetriever(BaseRetriever):
         self.reranker = reranker or reranker_service
         self.rrf_k = rrf_k or settings.RRF_K
 
-    def _is_user_authorized_for_doc(self, user: Any, doc: Optional[Any]) -> bool:
+    def _is_user_authorized_for_doc(self, user: Optional[Any], doc: Optional[Any]) -> bool:
         """Check if user has permission to view document based on role, access_level, and department."""
         if not doc:
             return False
+        doc_access = (doc.access_level or "internal").lower()
+
+        # Unauthenticated users: strictly allowed to retrieve ONLY public documents
+        if user is None:
+            return doc_access == "public"
+
         user_roles = [r.name for r in getattr(user, "roles", [])]
         if "admin" in user_roles:
             return True
 
-        doc_access = (doc.access_level or "internal").lower()
         doc_dept = doc.department
         user_dept = getattr(user, "department", None)
         user_id = getattr(user, "id", None)
@@ -61,6 +66,7 @@ class HybridRetriever(BaseRetriever):
             if doc_dept is None or doc_dept == user_dept or (user_id and getattr(doc, "uploaded_by", None) == user_id):
                 return True
         return False
+
 
     def _hydrate_results(
         self,
@@ -108,9 +114,10 @@ class HybridRetriever(BaseRetriever):
                 continue
 
             doc = db_chunk.document
-            if user is not None and not self._is_user_authorized_for_doc(user, doc):
+            if not self._is_user_authorized_for_doc(user, doc):
                 logger.debug(f"User unauthorized to view document chunk {point_id}. Excluded.")
                 continue
+
 
             results.append(
                 RetrievalResult(
@@ -254,12 +261,17 @@ class HybridRetriever(BaseRetriever):
 
         # 1. Semantic candidates
         filter_dict = filters.model_dump(exclude_none=True) if filters else None
-        query_vector = self.semantic_retriever.embedder.embed_query(cleaned_query)
-        semantic_matches = self.semantic_retriever.vector_store.search_vectors(
-            query_vector=query_vector,
-            top_k=fusion_source_pool_size,
-            filters=filter_dict,
-        )
+        try:
+            query_vector = self.semantic_retriever.embedder.embed_query(cleaned_query)
+            semantic_matches = self.semantic_retriever.vector_store.search_vectors(
+                query_vector=query_vector,
+                top_k=fusion_source_pool_size,
+                filters=filter_dict,
+            )
+        except Exception as semantic_err:
+            logger.warning(f"Semantic search unavailable in hybrid mode (falling back to BM25): {semantic_err}")
+            semantic_matches = []
+
 
         # 2. BM25 keyword candidates
         bm25_matches = self.bm25_index.search(

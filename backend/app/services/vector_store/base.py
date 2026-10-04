@@ -26,3 +26,9 @@ class BaseVectorStore(ABC):
         """Perform vector similarity search and return top-K candidate points."""
         pass
 
+    @abstractmethod
+    def delete_vectors_by_document(self, document_id: str) -> bool:
+        """Delete all vectors associated with document_id."""
+        pass
+
+

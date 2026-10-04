@@ -32,3 +32,8 @@ class DocumentRead(BaseModel):
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+
+class DocumentDetailRead(DocumentRead):
+    chunk_count: int = 0
+

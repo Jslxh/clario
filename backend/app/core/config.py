@@ -1,4 +1,5 @@
-from typing import List, Set, Optional
+from typing import List, Set, Optional, Any, Union
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -20,11 +21,27 @@ class Settings(BaseSettings):
         "http://localhost:3000",
     ]
 
+    @field_validator("CORS_ORIGINS", mode="before")
+    @classmethod
+    def assemble_cors_origins(cls, v: Any) -> List[str]:
+        if isinstance(v, str):
+            if v.strip().startswith("[") and v.strip().endswith("]"):
+                import json
+                try:
+                    return json.loads(v)
+                except Exception:
+                    pass
+            return [i.strip() for i in v.split(",") if i.strip()]
+        elif isinstance(v, (list, tuple, set)):
+            return [str(i).strip() for i in v if str(i).strip()]
+        return v
+
     # Relational Database Settings (PostgreSQL)
     DATABASE_URL: str = "postgresql+psycopg://clario_user:clario_password@localhost:5432/clario_db"
 
     # Vector Database & Embedding Settings (Phase 5)
     QDRANT_URL: str = "http://localhost:6333"
+    QDRANT_API_KEY: Optional[str] = None
     QDRANT_COLLECTION_NAME: str = "clario_documents"
     EMBEDDING_MODEL_NAME: str = "BAAI/bge-small-en-v1.5"  # Locked 384-dimensional model
     EMBEDDING_DIMENSION: int = 384
@@ -49,9 +66,17 @@ class Settings(BaseSettings):
 
 
     # Document Storage & Upload Limits (Phase 2B)
+    STORAGE_BACKEND: str = "local"         # Options: "local", "s3", "r2"
     STORAGE_DIR: str = "storage"
     MAX_UPLOAD_SIZE_BYTES: int = 52428800  # 50 MB max limit
     ALLOWED_EXTENSIONS: Set[str] = {"pdf", "docx", "txt"}
+
+    # Cloud Object Storage (S3 / Cloudflare R2)
+    S3_BUCKET_NAME: Optional[str] = None
+    S3_ENDPOINT_URL: Optional[str] = None  # e.g., https://<account_id>.r2.cloudflarestorage.com
+    S3_ACCESS_KEY_ID: Optional[str] = None
+    S3_SECRET_ACCESS_KEY: Optional[str] = None
+    S3_REGION_NAME: Optional[str] = "auto" # Cloudflare R2 default is "auto", AWS e.g. "us-east-1"
 
     # Document Chunking Configuration (Phase 4)
     CHUNK_SIZE: int = 500         # Target size in tokens (~2000 chars)
@@ -86,8 +111,10 @@ class Settings(BaseSettings):
 
     @property
     def sqlalchemy_database_url(self) -> str:
-        """Ensure standard SQLAlchemy postgresql+psycopg driver URL format."""
+        """Ensure standard SQLAlchemy postgresql+psycopg driver URL format for PostgreSQL & Supabase/Neon/Render."""
         url = self.DATABASE_URL
+        if url.startswith("postgres://"):
+            return url.replace("postgres://", "postgresql+psycopg://", 1)
         if url.startswith("postgresql://"):
             return url.replace("postgresql://", "postgresql+psycopg://", 1)
         return url

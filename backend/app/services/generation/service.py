@@ -104,6 +104,38 @@ class GenerationService:
 
         return cleaned_answer, citations
 
+    def contextualize_query(self, query: str, history: Optional[List[Dict[str, str]]] = None) -> str:
+        """Contextualize follow-up questions using prior conversation history before retrieval."""
+        if not history or not query:
+            return query
+
+        # Find recent user turns
+        recent_user_turns = [h["content"].strip() for h in history if h.get("role") == "user" and h.get("content")]
+        if not recent_user_turns:
+            return query
+
+        last_user_query = recent_user_turns[-1]
+        query_lower = query.lower().strip()
+        words = set(re.findall(r"\b\w+\b", query_lower))
+
+        # Check if query references prior context (pronouns, ellipses, short questions)
+        is_follow_up = (
+            len(words) <= 5
+            or bool(words & {"it", "its", "this", "that", "these", "those", "they", "them", "their", "such", "same"})
+            or any(phrase in query_lower for phrase in ["what about", "how about", "tell me more", "can i", "is there", "and "])
+        )
+
+        if is_follow_up:
+            stop_words = {"what", "is", "the", "for", "a", "an", "in", "of", "to", "on", "at", "by", "with", "about", "tell", "me"}
+            context_terms = [w for w in re.findall(r"\b\w+\b", last_user_query) if w.lower() not in stop_words]
+            context_str = " ".join(context_terms[-6:])
+            if context_str and context_str.lower() not in query_lower:
+                contextualized = f"{query} {context_str}"
+                logger.info(f"Contextualized follow-up query for retrieval: '{query}' -> '{contextualized}'")
+                return contextualized
+
+        return query
+
     def answer_query(
         self,
         db: Session,
@@ -115,6 +147,7 @@ class GenerationService:
         max_output_tokens: Optional[int] = None,
         verify: Optional[bool] = None,
         user: Optional[Any] = None,
+        history: Optional[List[Dict[str, str]]] = None,
     ) -> GenerationResponse:
         """Execute complete Q&A pipeline: Retrieval -> Context Assembly -> LLM Generation -> Citation Mapping -> Grounding Verification."""
         t0 = time.perf_counter()
@@ -128,10 +161,13 @@ class GenerationService:
         effective_max_tokens = max_output_tokens or settings.LLM_MAX_OUTPUT_TOKENS
         effective_verify = verify if verify is not None else settings.VERIFICATION_ENABLED
 
+        # 0. Contextualize query for retrieval if follow-up
+        retrieval_query = self.contextualize_query(cleaned_query, history)
+
         # 1. First/Second-Stage Retrieval
         search_resp = self.retriever.search(
             db=db,
-            query=cleaned_query,
+            query=retrieval_query,
             top_k=effective_top_k,
             filters=filters,
             mode=effective_mode,
@@ -145,7 +181,9 @@ class GenerationService:
         built_context = self.context_builder.build_context(
             query=cleaned_query,
             candidates=candidates,
+            history=history,
         )
+
 
         # 3. Short-Circuit Abstention on Empty/Insufficient Context
         if not built_context.has_sufficient_context or not built_context.context_chunks:

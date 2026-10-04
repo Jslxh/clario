@@ -161,6 +161,34 @@ class QdrantVectorStore(BaseVectorStore):
         logger.info(f"Qdrant search returned {len(results)} matches for query.")
         return results
 
+    def delete_vectors_by_document(self, document_id: str) -> bool:
+        """Delete all vectors matching document_id in collection payload."""
+        if not document_id:
+            return False
+        client = self._get_client()
+        try:
+            client.delete(
+                collection_name=self.collection_name,
+                points_selector=qmodels.FilterSelector(
+                    filter=qmodels.Filter(
+                        must=[
+                            qmodels.FieldCondition(
+                                key="document_id",
+                                match=qmodels.MatchValue(value=str(document_id)),
+                            )
+                        ]
+                    )
+                ),
+                wait=True,
+            )
+            logger.info(f"Deleted vector points for document '{document_id}' from Qdrant.")
+            return True
+        except Exception as err:
+            logger.warning(f"Could not delete vectors for document '{document_id}' from Qdrant: {err}")
+            return False
+
 
 qdrant_vector_store = QdrantVectorStore()
+qdrant_store = qdrant_vector_store
+
 

@@ -87,11 +87,21 @@ def login(
         department=user.department,
     )
 
+    from app.services.audit_service import audit_service
+    audit_service.log_event(
+        db=db,
+        action="login",
+        resource_type="auth",
+        user_id=user.id,
+        details={"email": user.email, "department": user.department},
+    )
+
     return TokenResponse(
         access_token=token,
         token_type="bearer",
         user=UserRead.model_validate(user),
     )
+
 
 
 @router.get("/me", response_model=UserRead, status_code=status.HTTP_200_OK)

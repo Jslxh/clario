@@ -12,15 +12,21 @@ logger = logging.getLogger(__name__)
 class QdrantVectorService:
     """Service abstraction for interacting with the Qdrant vector store."""
 
-    def __init__(self, url: Optional[str] = None, collection_name: Optional[str] = None):
+    def __init__(self, url: Optional[str] = None, collection_name: Optional[str] = None, api_key: Optional[str] = None):
         self.url = url or settings.QDRANT_URL
         self.collection_name = collection_name or settings.QDRANT_COLLECTION_NAME
+        self.api_key = api_key if api_key is not None else settings.QDRANT_API_KEY
         self._client: Optional[QdrantClient] = None
 
     def get_client(self) -> QdrantClient:
         """Lazy initialization of Qdrant client."""
         if self._client is None:
-            self._client = QdrantClient(url=self.url, timeout=10.0, check_compatibility=False)
+            self._client = QdrantClient(
+                url=self.url,
+                api_key=self.api_key,
+                timeout=10.0,
+                check_compatibility=False,
+            )
         return self._client
 
     def check_health(self) -> bool:
