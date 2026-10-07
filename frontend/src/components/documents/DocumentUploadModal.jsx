@@ -21,6 +21,7 @@ export const DocumentUploadModal = ({ isOpen, onClose, onUploadSuccess }) => {
   const [title, setTitle] = useState('');
   const [department, setDepartment] = useState('Engineering');
   const [accessLevel, setAccessLevel] = useState('internal');
+  const [autoProcess, setAutoProcess] = useState(true);
   const [isDragging, setIsDragging] = useState(false);
   const [isUploading, setIsUploading] = useState(false);
   const [errorMessage, setErrorMessage] = useState('');
@@ -126,7 +127,7 @@ export const DocumentUploadModal = ({ isOpen, onClose, onUploadSuccess }) => {
 
       handleClose();
       if (onUploadSuccess) {
-        onUploadSuccess(newDoc);
+        onUploadSuccess(newDoc, autoProcess);
       }
     } catch (err) {
       setErrorMessage(err.message || 'Failed to upload document. Please try again.');
@@ -300,6 +301,21 @@ export const DocumentUploadModal = ({ isOpen, onClose, onUploadSuccess }) => {
                 <option value="restricted">Restricted (Admin Only)</option>
               </select>
             </div>
+          </div>
+
+          {/* Auto-Process Checkbox Option */}
+          <div className="form-group-checkbox" style={{ margin: '1.25rem 0 0.5rem', display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
+            <input
+              id="upload-auto-process"
+              type="checkbox"
+              checked={autoProcess}
+              onChange={(e) => setAutoProcess(e.target.checked)}
+              disabled={isUploading}
+              style={{ width: '16px', height: '16px', accentColor: '#6366f1', cursor: 'pointer' }}
+            />
+            <label htmlFor="upload-auto-process" style={{ fontSize: '0.85rem', color: 'var(--text-primary)', cursor: 'pointer', userSelect: 'none' }}>
+              <strong>Automatically process & vectorize</strong> (Chunk, embed, and index into Qdrant Cloud immediately)
+            </label>
           </div>
 
           <div className="modal-actions-footer">

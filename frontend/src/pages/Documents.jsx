@@ -151,11 +151,33 @@ export const Documents = () => {
     }
   };
 
-  // Action: Upload success
-  const handleUploadSuccess = (newDoc) => {
+  // Action: Upload success with auto-process dispatch
+  const handleUploadSuccess = (newDoc, shouldAutoProcess = true) => {
     showNotification(`Document "${newDoc.title || newDoc.filename}" uploaded successfully to repository.`);
     setPage(1);
     loadDocuments(false);
+
+    if (shouldAutoProcess && isAdmin && newDoc?.id) {
+      handleProcessDocument(newDoc.id, newDoc.title || newDoc.filename);
+    }
+  };
+
+  // Action: Batch process all pending documents in single click
+  const handleProcessAllPending = () => {
+    const effectiveProcessing = new Set([...processingDocIds, ...globalProcessingDocIds]);
+    const pendingDocs = documents.filter(
+      (d) => d.status === 'UPLOADED' && !effectiveProcessing.has(d.id)
+    );
+
+    if (pendingDocs.length === 0) {
+      showNotification('No pending uploaded documents to process.', 'info');
+      return;
+    }
+
+    pendingDocs.forEach((doc) => {
+      handleProcessDocument(doc.id, doc.title || doc.filename);
+    });
+    showNotification(`Dispatched batch vector processing for ${pendingDocs.length} pending document(s).`, 'info');
   };
 
   // Action: Reset filters
@@ -170,8 +192,10 @@ export const Documents = () => {
   };
 
   // Summary Metrics Calculation
+  const effectiveProcessingSet = new Set([...processingDocIds, ...globalProcessingDocIds]);
+  const pendingDocsCount = documents.filter((d) => d.status === 'UPLOADED' && !effectiveProcessingSet.has(d.id)).length;
   const readyCount = documents.filter((d) => d.status === 'READY').length;
-  const processingCount = documents.filter((d) => d.status === 'PROCESSING' || processingDocIds.has(d.id)).length;
+  const processingCount = documents.filter((d) => d.status === 'PROCESSING' || effectiveProcessingSet.has(d.id)).length;
   const totalChunks = documents.reduce((sum, d) => sum + (d.chunk_count || 0), 0);
 
   return (
@@ -328,6 +352,8 @@ export const Documents = () => {
         onResetFilters={handleResetFilters}
         onRefresh={() => loadDocuments(false)}
         onOpenUpload={() => setIsUploadOpen(true)}
+        onProcessAll={handleProcessAllPending}
+        pendingCount={pendingDocsCount}
         isLoading={isLoading}
         isAdmin={isAdmin}
       />
