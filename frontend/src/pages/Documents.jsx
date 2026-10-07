@@ -33,11 +33,15 @@ export const Documents = () => {
   const pollTimeoutRef = useRef(null);
 
   // Extract user role cleanly
-  const userRoles = user?.roles
-    ? user.roles.map((r) => (typeof r === 'object' ? r.name : r))
-    : ['user'];
+  const userRoles = (
+    user?.roles
+      ? user.roles.map((r) => (typeof r === 'object' && r !== null ? r.name : r))
+      : user?.role
+      ? [user.role]
+      : ['user']
+  ).map((r) => String(r).toLowerCase());
   const userRole = userRoles[0] || 'user';
-  const isAdmin = userRoles.includes('admin');
+  const isAdmin = userRoles.includes('admin') || userRoles.includes('analyst');
   const userDept = user?.department || 'Engineering';
 
   const showNotification = (message, type = 'success') => {
@@ -166,18 +170,19 @@ export const Documents = () => {
   const handleProcessAllPending = () => {
     const effectiveProcessing = new Set([...processingDocIds, ...globalProcessingDocIds]);
     const pendingDocs = documents.filter(
-      (d) => d.status === 'UPLOADED' && !effectiveProcessing.has(d.id)
+      (d) => (d.status === 'UPLOADED' || d.status === 'FAILED') && !effectiveProcessing.has(d.id)
     );
+    const docsToProcess = pendingDocs.length > 0 ? pendingDocs : documents.filter((d) => !effectiveProcessing.has(d.id));
 
-    if (pendingDocs.length === 0) {
-      showNotification('No pending uploaded documents to process.', 'info');
+    if (docsToProcess.length === 0) {
+      showNotification('All documents on this page are already processed and vector-ready.', 'info');
       return;
     }
 
-    pendingDocs.forEach((doc) => {
+    docsToProcess.forEach((doc) => {
       handleProcessDocument(doc.id, doc.title || doc.filename);
     });
-    showNotification(`Dispatched batch vector processing for ${pendingDocs.length} pending document(s).`, 'info');
+    showNotification(`Dispatched vector processing for ${docsToProcess.length} document(s).`, 'info');
   };
 
   // Action: Reset filters
@@ -193,7 +198,7 @@ export const Documents = () => {
 
   // Summary Metrics Calculation
   const effectiveProcessingSet = new Set([...processingDocIds, ...globalProcessingDocIds]);
-  const pendingDocsCount = documents.filter((d) => d.status === 'UPLOADED' && !effectiveProcessingSet.has(d.id)).length;
+  const pendingDocsCount = documents.filter((d) => (d.status === 'UPLOADED' || d.status === 'FAILED') && !effectiveProcessingSet.has(d.id)).length;
   const readyCount = documents.filter((d) => d.status === 'READY').length;
   const processingCount = documents.filter((d) => d.status === 'PROCESSING' || effectiveProcessingSet.has(d.id)).length;
   const totalChunks = documents.reduce((sum, d) => sum + (d.chunk_count || 0), 0);
@@ -218,7 +223,7 @@ export const Documents = () => {
       </div>
 
       {/* Main Page Title Header */}
-      <div className="page-header documents-header">
+      <div className="page-header documents-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '1rem' }}>
         <div className="header-text-group">
           <div className="title-with-icon">
             <div className="title-icon-box">
@@ -237,6 +242,50 @@ export const Documents = () => {
               </p>
             </div>
           </div>
+        </div>
+
+        {/* Header Action Buttons */}
+        <div className="header-actions-group" style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', flexWrap: 'wrap' }}>
+          <button
+            type="button"
+            className="btn-primary"
+            onClick={handleProcessAllPending}
+            disabled={isLoading || documents.length === 0}
+            id="btn-header-process-all"
+            title="Convert and index all documents to vector embeddings in Qdrant Cloud"
+            style={{
+              background: 'linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%)',
+              borderColor: '#818cf8',
+              boxShadow: '0 0 16px rgba(99, 102, 241, 0.35)',
+              fontWeight: '600',
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '0.5rem',
+              padding: '0.6rem 1.15rem',
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+              <polyline points="23 4 23 10 17 10" />
+              <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+            </svg>
+            <span>⚡ Process All {pendingDocsCount > 0 ? `(${pendingDocsCount})` : 'Documents'}</span>
+          </button>
+
+          {isAdmin && (
+            <button
+              type="button"
+              className="btn-secondary"
+              onClick={() => setIsUploadOpen(true)}
+              id="btn-header-upload"
+              style={{ display: 'inline-flex', alignItems: 'center', gap: '0.45rem', padding: '0.6rem 1.15rem' }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                <line x1="12" y1="5" x2="12" y2="19" />
+                <line x1="5" y1="12" x2="19" y2="12" />
+              </svg>
+              <span>Upload Document</span>
+            </button>
+          )}
         </div>
       </div>
 
@@ -368,10 +417,36 @@ export const Documents = () => {
             </svg>
             <span>Managed Repository Documents</span>
           </div>
-          <div className="table-header-meta">
+          <div className="table-header-meta" style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
             <span className="table-badge">
               {documents.length} document{documents.length === 1 ? '' : 's'} on page {page}
             </span>
+            {documents.length > 0 && (
+              <button
+                type="button"
+                className="btn-table-action process"
+                onClick={handleProcessAllPending}
+                id="btn-panel-process-all"
+                title="Process all documents on this page into Qdrant vectors"
+                style={{
+                  padding: '5px 12px',
+                  background: 'rgba(99, 102, 241, 0.15)',
+                  color: '#818cf8',
+                  borderColor: 'rgba(99, 102, 241, 0.4)',
+                  fontSize: '0.8rem',
+                  fontWeight: 600,
+                  display: 'inline-flex',
+                  alignItems: 'center',
+                  gap: '0.35rem',
+                }}
+              >
+                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                  <polyline points="23 4 23 10 17 10" />
+                  <path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+                </svg>
+                <span>⚡ Batch Process Page</span>
+              </button>
+            )}
           </div>
         </div>
 

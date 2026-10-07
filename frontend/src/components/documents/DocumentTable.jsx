@@ -158,7 +158,7 @@ export const DocumentTable = ({
                   {/* Actions */}
                   <td style={{ textAlign: 'right' }}>
                     <div className="table-actions-group">
-                      {doc.status === 'UPLOADED' && !isProcessing && (
+                      {isAdmin && (doc.status === 'UPLOADED' || doc.status === 'FAILED') && !isProcessing && (
                         <button
                           type="button"
                           className="btn-table-action process"
