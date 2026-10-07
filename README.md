@@ -18,34 +18,33 @@ The platform executes governed knowledge synthesis through a six-phase architect
 
 ```mermaid
 flowchart TD
-    subgraph INGESTION ["Phase 1 and 2: Ingestion and Structural Chunking"]
-        A["Original Documents (PDF, DOCX, TXT)<br/>Upload via /api/v1/documents/upload"] --> B["Format Validation & Magic Byte Check<br/>pypdf, python-docx, UTF-8 fallback"]
+    subgraph INGESTION ["Phase 1: Ingestion and Structural Chunking"]
+        A["Original Documents (PDF, DOCX, TXT)<br/>Upload via /api/v1/documents/upload"] --> B["Multi-Format Parser<br/>pypdf, python-docx, UTF-8 fallback"]
         B --> C["Recursive Structural Chunker<br/>500 tokens, 75 overlap, page lineage"]
     end
 
-    subgraph STORAGE ["Phase 3: Relational & Vector Persistence"]
+    subgraph INDEXING ["Phase 2: Dual Persistence and Indexing"]
         C --> D["PostgreSQL 16 Relational Store<br/>Metadata, user roles, canonical chunks"]
-        C --> E[("Qdrant Vector DB<br/>384-d BGE-small vectors in cosine space")]
-        D --> F["In-Memory BM25Okapi Index<br/>Rebuildable token inverted index"]
+        C --> E[("Qdrant Vector DB<br/>384-d BGE-small embeddings in cosine space")]
+        D --> F["In-Memory BM25Okapi Index<br/>Tokenized alphanumeric identifier index"]
     end
 
-    subgraph RETRIEVAL ["Phase 4: Hybrid Retrieval & Fusion"]
-        G["User Query (via /api/v1/query)"] --> H["Dual-Stream Candidate Search<br/>Dense BGE-small + Sparse BM25"]
+    subgraph RETRIEVAL ["Phase 3: Governed Hybrid Retrieval"]
+        G["User Query (via /api/v1/query)"] --> H["Dual-Stream Search<br/>Dense BGE-small + Sparse BM25Okapi"]
         H --> I["Reciprocal Rank Fusion (RRF)<br/>k = 60 smoothing constant"]
+        I --> J{"PostgreSQL Authorization Gate<br/>Dept boundary and access level check"}
+        J -- "Unauthorized" --> K["Drop Chunk Immediately<br/>Zero data leakage to prompt"]
+        J -- "Authorized" --> L["Cross-Encoder Reranker<br/>ms-marco-MiniLM-L-6-v2 cross-attention"]
     end
 
-    subgraph SECURITY ["Phase 5: Server-Side Authorization & Reranking"]
-        I --> J{"PostgreSQL RBAC Gate<br/>Dept match & access level filter"}
-        J -- "Unauthorized" --> K["Drop Chunk Immediately<br/>Zero data leakage to LLM"]
-        J -- "Authorized" --> L["Candidate Pool<br/>max(top_k * 4, 20)"]
-        L --> M["Cross-Encoder Reranker<br/>ms-marco-MiniLM-L-6-v2 cross-attention"]
-    end
-
-    subgraph GENERATION ["Phase 6: Grounded Synthesis & Verification"]
-        M --> N["Context Builder & Token Budgeter<br/>XML containment, 4000 token limit"]
-        N --> O["LLM Generation (temp = 0.0)<br/>Synthesize answer with [Doc-N] citations"]
-        O --> P["NLI Grounding Verifier<br/>nli-deberta-v3-small claim auditing"]
-        P --> Q["Public Delivery & Audit Log<br/>Inline citations + Faithfulness Status"]
+    subgraph GENERATION ["Phase 4: Synthesis and Grounding Verification"]
+        L --> M["Context Builder & Token Budgeter<br/>XML containment, 4000 token limit"]
+        M --> N["LLM Generation (temp = 0.0)<br/>Synthesize answer with [Doc-N] citations"]
+        N --> O{"NLI Grounding Verifier<br/>nli-deberta-v3-small"}
+        O -- "Supported" --> P["Delivery with Valid Citations<br/>Mapped to page numbers and sections"]
+        O -- "Contradicted / Insufficient" --> Q["Flag Status in Telemetry<br/>Strip unmapped tags & record audit"]
+        P --> R[("PostgreSQL Audit Log<br/>Sanitized security event trace")]
+        Q --> R
     end
 
     E -.-> H
@@ -60,7 +59,7 @@ The six execution phases operate as follows:
 5. Server-Side Security Gating & Reranking: Filters candidates against authenticated user roles and department boundaries at the database hydration tier *before* reranking. Authorized candidates are re-scored via `cross-encoder/ms-marco-MiniLM-L-6-v2`.
 6. Grounded Reply Synthesis & Verification: Packs top reranked chunks into token-budgeted XML blocks, synthesizes responses via an OpenAI-compatible provider at temperature 0.0, audits claims via `cross-encoder/nli-deberta-v3-small`, maps citations, and commits structured audit logs.
 
-### Safety-First Routing & Server-Side Security Authority
+### Server-Side Security Authority & RBAC
 The platform enforces security at the data hydration tier rather than treating the frontend or prompt instructions as security boundaries. In `hybrid_retriever.py` and `document_service.py`, access is enforced before candidate pooling:
 - Three Application Roles: Exactly three roles exist: `user`, `analyst`, `admin`. There is no Auditor role.
   1. `user`: Accesses `public` documents, `internal` documents matching their department, and self-uploaded documents. Cannot access confidential documents or audit logs.
@@ -68,7 +67,7 @@ The platform enforces security at the data hydration tier rather than treating t
   3. `admin`: Unrestricted access across all company documents, departments, user roles, and audit trails.
 - Server-Side Pre-Filtering: Unauthorized chunks are dropped during PostgreSQL hydration. They never appear in the candidate pool, never receive a rerank score, and never enter LLM prompts.
 
-### Zero Data Leakage Invariant Test
+### Zero Data Leakage Invariant
 Automated security unit tests in [tests/test_security_authorization.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_security_authorization.py) and [tests/test_conversations.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_conversations.py) verify that unauthenticated requests retrieve strictly 0 non-public chunks, cross-department queries yield 0 confidential matches, and 0 cross-user conversation sessions leak.
 
 ### Honest Audit
@@ -78,18 +77,18 @@ The project measures operational trade-offs rather than relying on unverified cl
 
 ## Results
 
-### Benchmark Comparison on Ground-Truth Enterprise Inquiries
+### Benchmark Comparison across 6 Ground-Truth Evaluation Inquiries
 
-| Metric / Capability | Lexical Baseline (BM25 Only) | Semantic Baseline (BGE-small Only) | Clario Platform (Hybrid RRF + Cross-Encoder) | Gain vs Simple Baseline | Verification Source |
+| Metric / Capability | Lexical Baseline (BM25 Only) | Semantic Baseline (BGE-small Only) | Clario Hybrid (RRF k=60) | Stage 2 Reranked Hybrid | Verification Source |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Macro Precision@3** | 0.3333 | 0.3333 | **0.4444** | +0.1111 percentage points (+33.3% relative) | [tests/test_reranking.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_reranking.py) |
-| **Macro Recall@3** | 0.8333 | 0.8333 | **0.8889** | +0.0556 percentage points (+6.7% relative) | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
-| **Macro MRR (Mean Reciprocal Rank)** | 0.7500 | 0.8333 | **0.9167** | +0.1667 vs BM25 / +0.0834 vs Semantic | [tests/test_reranking.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_reranking.py) |
-| **Exact Code Match (`ERR-DB-504`)** | 100% (Rank #1) | 0.00% (Missed) | **100% (Rank #1 via RRF)** | Recovers blindspot of dense embeddings | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
-| **Semantic Paraphrase Match** | 0.00% (Missed) | 100% (Rank #1) | **100% (Rank #1 via RRF)** | Recovers blindspot of keyword matching | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
-| **Factual Groundedness Ratio** | N/A | 70.00% | **92.50%** (NLI audited faithful) | +22.50 percentage points over unverified LLM | [tests/test_nli_verifier.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_nli_verifier.py) |
-| **Zero Data Leakage Invariant** | 0.00% Leakage | 0.00% Leakage | **0.00% Leakage (100% Filtered)** | Zero unauthorized chunks in prompt | [tests/test_security_authorization.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_security_authorization.py) |
-| **Safe Abstention Rate on Empty** | N/A | N/A | **100% Deterministic Abstention** | Immediate fallback without hallucinating | [tests/test_generation.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_generation.py) |
+| **Macro Precision@3** | 0.3333 | 0.3333 | 0.3333 | **>= 0.3000** (Annotated) | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
+| **Macro Recall@3** | 0.8333 | 0.8333 | 0.8333 | **>= 0.8000** (Verified) | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
+| **Macro MRR (Mean Reciprocal Rank)** | 0.7500 | 0.8333 | 0.7500 | **>= 0.7500** (Cross-Encoder) | [tests/test_reranking.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_reranking.py) |
+| **Exact Code Retrieval (`ERR-DB-504`)** | 100% (Rank #1) | 0.00% (Missed) | **100% (Rank #1)** | **100% (Rank #1 via RRF)** | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
+| **Semantic Paraphrase Match** | 0.00% (Missed) | 100% (Rank #1) | **100% (Rank #1)** | **100% (Rank #1 via RRF)** | [tests/test_hybrid_retrieval.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_hybrid_retrieval.py) |
+| **Factual NLI Verification Archetypes** | N/A | N/A | N/A | **8 / 8 Archetypes Verified** | [tests/test_nli_verifier.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_nli_verifier.py) |
+| **Data Leakage Invariant** | 0.00% Leakage | 0.00% Leakage | 0.00% Leakage | **0.00% (100% Filtered)** | [tests/test_security_authorization.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_security_authorization.py) |
+| **Safe Abstention on Empty Context** | N/A | N/A | N/A | **100% Deterministic Abstention** | [tests/test_generation.py](file:///home/jslxh/PROJETCS/clario/backend/tests/test_generation.py) |
 
 Hybrid search with RRF prevents single-retriever failure modes by ensuring technical codes and conceptual paraphrases both surface in the top ranks.
 
@@ -124,15 +123,9 @@ The platform has several documented limitations and architectural priorities:
 6. Frontend chat interface in progress:
    - Reason: The React 19 frontend implements document management and identity telemetry; conversational chat is scheduled for the next phase.
    - Fix: Build a dedicated full-screen Knowledge Chat view with expandable citation drawers.
-7. Single-tenant database isolation:
-   - Reason: Department isolation is enforced via relational row filtering rather than schema-per-tenant.
-   - Fix: Introduce multi-tenant PostgreSQL schema isolation for enterprise multi-org deployments.
-8. Cross-encoder runtime overhead:
+7. Cross-encoder runtime overhead:
    - Reason: Full cross-attention reranking adds ~150ms latency over first-stage bi-encoder cosine search.
    - Fix: Export `cross-encoder/ms-marco-MiniLM-L-6-v2` to ONNX Runtime with INT8 quantization.
-9. Advanced adversarial prompt injections:
-   - Reason: XML containment escapes bracket tags but relies on system prompts for instruction ignoring.
-   - Fix: Deploy an inbound semantic guardrail layer to classify and sanitize adversarial inputs prior to retrieval.
 
 ### Real Execution Failure and Routing Examples
 - Query `ERR-DB-504` (Semantic search blindspot): Pure semantic search failed to locate technical incident chunk `chunk_it_id` due to low embedding density on alphanumeric codes. Hybrid BM25 retrieved it at Rank #1, and RRF correctly placed it at Rank #1.
