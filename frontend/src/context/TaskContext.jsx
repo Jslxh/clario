@@ -157,7 +157,8 @@ export const TaskProvider = ({ children }) => {
     const query = (forcedQuery || queryText).trim();
     if (!query) return;
 
-    const targetConvId = activeConversationId || 'new';
+    const initialConvId = activeConversationId;
+    const targetConvId = initialConvId || 'new';
     const tempMsgId = `temp-${Date.now()}`;
     const optimisticUserMsg = {
       id: tempMsgId,
@@ -172,6 +173,7 @@ export const TaskProvider = ({ children }) => {
       return {
         ...prev,
         [targetConvId]: [...existing, optimisticUserMsg],
+        new: [...(prev.new || []).filter((m) => m.id !== tempMsgId), optimisticUserMsg],
       };
     });
 
@@ -189,6 +191,14 @@ export const TaskProvider = ({ children }) => {
         optimisticMsg: optimisticUserMsg,
         startTime: Date.now(),
       },
+      new: {
+        isGenerating: true,
+        pid,
+        thread: threadName,
+        query,
+        optimisticMsg: optimisticUserMsg,
+        startTime: Date.now(),
+      },
     }));
 
     // Spawn async background task
@@ -196,17 +206,38 @@ export const TaskProvider = ({ children }) => {
       type: 'llm_query',
       thread: threadName,
       title: `Grounded RAG: "${query.slice(0, 42)}${query.length > 42 ? '...' : ''}"`,
-      meta: { conversationId: activeConversationId, query },
+      meta: { conversationId: initialConvId, query },
       taskFn: async (taskPid) => {
+        let effectiveConvId = initialConvId;
         try {
-          let effectiveConvId = activeConversationId;
-
           // If new conversation, create it first
           if (!effectiveConvId) {
             const titleWords = query.split(/\s+/).slice(0, 6).join(' ');
             const initialTitle = titleWords.length > 50 ? `${titleWords.slice(0, 47)}...` : titleWords;
             const newConv = await apiClient.createConversation(initialTitle || 'New Conversation');
             effectiveConvId = newConv.id;
+
+            // Immediately migrate optimistic cache and activeGenerations to new conversation ID
+            setConversationMessagesCache((prev) => {
+              const existing = prev['new'] || prev[targetConvId] || [optimisticUserMsg];
+              return {
+                ...prev,
+                [effectiveConvId]: existing,
+              };
+            });
+
+            setActiveGenerations((prev) => ({
+              ...prev,
+              [effectiveConvId]: {
+                isGenerating: true,
+                pid: taskPid,
+                thread: threadName,
+                query,
+                optimisticMsg: optimisticUserMsg,
+                startTime: Date.now(),
+              },
+            }));
+
             setActiveConversationId(effectiveConvId);
           }
 
@@ -238,6 +269,7 @@ export const TaskProvider = ({ children }) => {
                 res.user_message || optimisticUserMsg,
                 assistantMsg,
               ],
+              new: [],
             };
           });
 
@@ -247,6 +279,7 @@ export const TaskProvider = ({ children }) => {
         } finally {
           setActiveGenerations((prev) => {
             const updated = { ...prev };
+            if (effectiveConvId) delete updated[effectiveConvId];
             delete updated[targetConvId];
             delete updated['new'];
             return updated;
@@ -365,7 +398,10 @@ export const TaskProvider = ({ children }) => {
     // Chat context
     conversations,
     activeConversationId,
-    activeMessages: conversationMessagesCache[activeConversationId || 'new'] || [],
+    activeMessages:
+      (activeConversationId && conversationMessagesCache[activeConversationId]?.length > 0)
+        ? conversationMessagesCache[activeConversationId]
+        : (conversationMessagesCache['new'] || conversationMessagesCache[activeConversationId] || []),
     conversationMessagesCache,
     activeGenerations,
     isLoadingHistory,

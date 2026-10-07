@@ -3,7 +3,6 @@ import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
-
 from app.main import app
 from app.core.database import SessionLocal
 from app.core.security import create_access_token, hash_password

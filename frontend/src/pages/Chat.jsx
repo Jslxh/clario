@@ -23,7 +23,7 @@ export const Chat = () => {
   const messagesEndRef = useRef(null);
   const inputRef = useRef(null);
 
-  const currentGen = activeGenerations[activeConversationId || 'new'];
+  const currentGen = (activeConversationId ? activeGenerations[activeConversationId] : null) || activeGenerations['new'];
   const isGenerating = Boolean(currentGen?.isGenerating);
 
   const scrollToBottom = () => {

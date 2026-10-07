@@ -179,7 +179,67 @@ pytest
 ```
 Executes all 23 test modules verifying parsers, chunking, embeddings, hybrid retrieval, reranking, NLI verification, and RBAC security.
 
-### 5. Launch Backend REST Service
+- **PostgreSQL**: Listening on `localhost:5432`
+- **Qdrant Vector DB**: Listening on `http://localhost:6333` (HTTP) and `6334` (gRPC)
+
+---
+
+## 5. Starting Backend (FastAPI)
+
+1. Navigate to the `backend/` directory:
+   ```bash
+   cd backend
+   ```
+
+2. Create and activate a Python virtual environment:
+   ```bash
+   python3 -m venv .venv
+   source .venv/bin/activate  # On Windows: .venv\Scripts\activate
+   ```
+
+3. Install requirements:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Launch the FastAPI development server:
+   ```bash
+   uvicorn app.main:app --reload --port 8000
+   ```
+
+5. Run test suite:
+   ```bash
+   pytest
+   ```
+
+---
+
+## 6. Starting Frontend (React + Vite)
+
+1. Navigate to the `frontend/` directory:
+   ```bash
+   cd frontend
+   ```
+
+2. Install dependencies:
+   ```bash
+   npm install
+   ```
+
+3. Start the Vite development server:
+   ```bash
+   npm run dev
+   ```
+
+4. Open `http://localhost:5858` in your browser.
+
+---
+
+## 7. Health-Check Endpoint Verification
+
+The backend exposes a lightweight health check endpoint at `GET /health` (and `GET /api/v1/health`).
+
+### Request:
 ```bash
 cd backend
 uvicorn app.main:app --host 127.0.0.1 --port 8000 --reload
