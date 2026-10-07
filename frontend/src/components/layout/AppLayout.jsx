@@ -1,8 +1,11 @@
 import React from 'react';
 import { useAuth } from '../../context/AuthContext';
+import { useTask } from '../../context/TaskContext';
+import { ProcessMonitorDrawer } from '../common/ProcessMonitorDrawer';
 
 export const AppLayout = ({ currentView = 'documents', onViewChange, children }) => {
   const { user, logout } = useAuth();
+  const { activeProcessesCount, runningTasks, openProcessDrawer, globalNotification, dismissGlobalNotification } = useTask();
 
   const userInitials = user?.name
     ? user.name
@@ -39,9 +42,43 @@ export const AppLayout = ({ currentView = 'documents', onViewChange, children })
         </div>
 
         <div className="header-right">
-          <span className="env-tag">ENV: {import.meta.env.MODE?.toUpperCase() || 'DEVELOPMENT'}</span>
+          {/* Real-Time Async Process & Thread Indicator */}
+          <button
+            type="button"
+            className={`async-process-indicator-btn ${activeProcessesCount > 0 ? 'running' : 'idle'}`}
+            onClick={openProcessDrawer}
+            title="Open Async Process & Worker Thread Monitor"
+            id="btn-process-monitor"
+          >
+            <span className={`pulse-dot ${activeProcessesCount > 0 ? 'active' : ''}`}></span>
+            <span className="proc-indicator-text">
+              {activeProcessesCount > 0 ? (
+                <>
+                  <strong>{activeProcessesCount} Worker{activeProcessesCount === 1 ? '' : 's'} Active</strong>
+                  <span className="proc-pid-hint">({runningTasks[0]?.id})</span>
+                </>
+              ) : (
+                <span>Threads Idle (Ready)</span>
+              )}
+            </span>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2" />
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2" />
+            </svg>
+          </button>
 
-          <div className="user-profile-badge">
+          <div className="system-status-indicator" title="Connected to Enterprise Knowledge Cloud">
+            <span className="pulse-dot"></span>
+            <span>Cloud Connected</span>
+          </div>
+
+          <div
+            className="user-profile-badge"
+            onClick={() => navigateTo('profile')}
+            style={{ cursor: 'pointer' }}
+            title="View Account Profile"
+            id="header-user-profile-btn"
+          >
             <div className="avatar-circle">{userInitials}</div>
             <div className="user-info-text">
               <span className="user-display-name">{user?.name || 'Authorized User'}</span>
@@ -64,6 +101,30 @@ export const AppLayout = ({ currentView = 'documents', onViewChange, children })
           </button>
         </div>
       </header>
+
+      {/* Global Toast for Async Process Events */}
+      {globalNotification && (
+        <div className={`toast-notification ${globalNotification.type} global-async-toast`} role="status">
+          <div className="toast-icon">
+            {globalNotification.pid && (
+              <span className="toast-pid-pill">{globalNotification.pid}</span>
+            )}
+            <span className="pulse-dot active"></span>
+          </div>
+          <span className="toast-message">{globalNotification.message}</span>
+          <button
+            type="button"
+            className="toast-close"
+            onClick={dismissGlobalNotification}
+            aria-label="Dismiss notification"
+          >
+            &times;
+          </button>
+        </div>
+      )}
+
+      {/* Async Process & Worker Thread Drawer */}
+      <ProcessMonitorDrawer />
 
       {/* Main Enterprise Workspace */}
       <div className="workspace-body">
