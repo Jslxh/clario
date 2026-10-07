@@ -11,6 +11,7 @@ export const DocumentDetailsDrawer = ({
   onDelete,
 }) => {
   const [doc, setDoc] = useState(null);
+  const [chunks, setChunks] = useState(null);
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState('');
   const [isProcessingLocal, setIsProcessingLocal] = useState(false);
@@ -27,6 +28,21 @@ export const DocumentDetailsDrawer = ({
         const data = await apiClient.getDocument(documentId);
         if (isMounted) {
           setDoc(data);
+        }
+
+        // Fetch real-time extracted chunks if document is ready
+        if (data && (data.status === 'READY' || data.chunk_count > 0)) {
+          try {
+            const chunkData = await apiClient.getDocumentChunks(documentId);
+            if (isMounted) {
+              setChunks(Array.isArray(chunkData) ? chunkData : null);
+            }
+          } catch {
+            // Chunks retrieval non-blocking
+            if (isMounted) setChunks(null);
+          }
+        } else if (isMounted) {
+          setChunks(null);
         }
       } catch (err) {
         if (isMounted) {
@@ -236,6 +252,7 @@ export const DocumentDetailsDrawer = ({
               <div className="drawer-section">
                 <h3 className="drawer-section-title">Vector Chunks & Embeddings</h3>
                 <ChunkViewer
+                  chunks={chunks}
                   chunkCount={doc.chunk_count || 0}
                   status={doc.status}
                 />

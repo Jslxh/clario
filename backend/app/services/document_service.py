@@ -546,6 +546,43 @@ class DocumentService:
         chunk_count = db.query(DocumentChunk).filter(DocumentChunk.document_id == doc.id).count()
         return doc, chunk_count
 
+    def get_document_chunks(
+        self,
+        db: Session,
+        document_id: str,
+        user: Optional[Any] = None,
+    ):
+        """Retrieve real-time database chunks for a document, enforcing authorization."""
+        try:
+            doc_uuid = uuid.UUID(document_id)
+        except ValueError as err:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid document UUID: {document_id}",
+            ) from err
+
+        doc = db.query(Document).filter(Document.id == doc_uuid).first()
+        if not doc:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Document with ID '{document_id}' not found.",
+            )
+
+        if not self.is_user_authorized_for_doc(user, doc):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: You do not have permission to view this document.",
+            )
+
+        from app.models.document_chunk import DocumentChunk
+        chunks = (
+            db.query(DocumentChunk)
+            .filter(DocumentChunk.document_id == doc.id)
+            .order_by(DocumentChunk.chunk_index.asc())
+            .all()
+        )
+        return chunks
+
     def delete_document(
         self,
         db: Session,

@@ -142,24 +142,35 @@ def rbac_fixtures(db: Session):
     db.add_all([chunk_pub, chunk_eng, chunk_hr, chunk_res])
     db.commit()
 
-    return {
-        "admin": admin,
-        "token_admin": token_admin,
-        "eng_user": eng_user,
-        "token_eng": token_eng,
-        "docs": {
-            "pub": doc_pub,
-            "eng": doc_eng,
-            "hr": doc_hr,
-            "res": doc_res,
-        },
-        "chunks": {
-            "pub": chunk_pub,
-            "eng": chunk_eng,
-            "hr": chunk_hr,
-            "res": chunk_res,
-        },
-    }
+    try:
+        yield {
+            "admin": admin,
+            "token_admin": token_admin,
+            "eng_user": eng_user,
+            "token_eng": token_eng,
+            "docs": {
+                "pub": doc_pub,
+                "eng": doc_eng,
+                "hr": doc_hr,
+                "res": doc_res,
+            },
+            "chunks": {
+                "pub": chunk_pub,
+                "eng": chunk_eng,
+                "hr": chunk_hr,
+                "res": chunk_res,
+            },
+        }
+    finally:
+        db.query(DocumentChunk).filter(
+            DocumentChunk.document_id.in_([doc_pub.id, doc_eng.id, doc_hr.id, doc_res.id])
+        ).delete(synchronize_session=False)
+        db.query(Document).filter(
+            Document.id.in_([doc_pub.id, doc_eng.id, doc_hr.id, doc_res.id])
+        ).delete(synchronize_session=False)
+        db.delete(admin)
+        db.delete(eng_user)
+        db.commit()
 
 
 def test_retriever_is_user_authorized_for_doc_unauthenticated(rbac_fixtures):

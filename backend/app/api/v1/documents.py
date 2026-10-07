@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.models.document import Document, DocumentStatus
-from app.schemas.document import DocumentRead, DocumentDetailRead
+from app.schemas.document import DocumentRead, DocumentDetailRead, DocumentChunkRead
 from app.services.document_service import document_service
 
 from app.api.deps import get_current_user_optional
@@ -135,6 +135,25 @@ def get_document(
     result = DocumentDetailRead.model_validate(doc)
     result.chunk_count = chunk_count
     return result
+
+
+@router.get(
+    "/{document_id}/chunks",
+    response_model=List[DocumentChunkRead],
+    status_code=status.HTTP_200_OK,
+    summary="Get Document Chunks",
+    description="Retrieve extracted vector chunks for an authorized document from the database.",
+)
+def get_document_chunks(
+    document_id: str,
+    db: Session = Depends(get_db),
+    current_user: Optional[User] = Depends(get_current_user_optional),
+):
+    return document_service.get_document_chunks(
+        db=db,
+        document_id=document_id,
+        user=current_user,
+    )
 
 
 @router.delete(

@@ -4,12 +4,17 @@ import apiClient from '../api/client';
 const AuthContext = createContext(null);
 
 export const AuthProvider = ({ children }) => {
-  const [user, setUser] = useState(null);
+  const [user, setUser] = useState(() => apiClient.getStoredUser());
   const [token, setToken] = useState(() => apiClient.getToken());
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(() => {
+    const storedToken = apiClient.getToken();
+    const storedUser = apiClient.getStoredUser();
+    // Only show full loading if we have a token but no hydrated user profile yet
+    return Boolean(storedToken && !storedUser);
+  });
   const [error, setError] = useState(null);
 
-  // Initialize and verify existing session
+  // Initialize and verify existing session in background without flashing login
   useEffect(() => {
     let isMounted = true;
 
@@ -29,15 +34,18 @@ export const AuthProvider = ({ children }) => {
         if (isMounted) {
           setUser(userData);
           setToken(storedToken);
+          apiClient.setStoredUser(userData);
           setError(null);
         }
       } catch (err) {
-        // If token is invalid or expired, clear it
-        console.warn('Session restoration failed:', err);
-        apiClient.clearToken();
-        if (isMounted) {
-          setUser(null);
-          setToken(null);
+        // If token is invalid or expired (401), clear it
+        if (err.status === 401) {
+          console.warn('Session expired or unauthorized. Logging out:', err);
+          apiClient.clearToken();
+          if (isMounted) {
+            setUser(null);
+            setToken(null);
+          }
         }
       } finally {
         if (isMounted) {

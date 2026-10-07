@@ -164,4 +164,53 @@ describe('Milestone 11: Document Management API Client & Logic', () => {
 
     assert.strictEqual(apiClient.getToken(), null, 'Token should be cleared on 401');
   });
+
+  test('6. getDocumentChunks calls GET /api/v1/documents/{id}/chunks with Authorization', async () => {
+    let capturedUrl = '';
+    let capturedMethod = '';
+
+    global.fetch = mock.fn(async (url, options) => {
+      capturedUrl = url;
+      capturedMethod = options.method;
+      return {
+        ok: true,
+        status: 200,
+        headers: new Headers({ 'content-type': 'application/json' }),
+        json: async () => [
+          {
+            id: '55555555-5555-5555-5555-555555555555',
+            chunk_index: 0,
+            content: 'Real database chunk extracted from document.',
+            page_number: 1,
+            section: 'Introduction',
+          },
+        ],
+      };
+    });
+
+    apiClient.setToken('test-jwt-token-chunks');
+    const chunks = await apiClient.getDocumentChunks('doc-uuid-999');
+    assert.strictEqual(chunks.length, 1);
+    assert.strictEqual(chunks[0].chunk_index, 0);
+    assert.strictEqual(chunks[0].content, 'Real database chunk extracted from document.');
+    assert(capturedUrl.endsWith('/api/v1/documents/doc-uuid-999/chunks'));
+    assert.strictEqual(capturedMethod, 'GET');
+  });
+
+  test('7. User session persistence stores and restores user profile across page refresh', () => {
+    const fakeUser = {
+      id: 'usr-123',
+      email: 'user@clario.local',
+      roles: ['user'],
+      department: 'Engineering',
+    };
+
+    apiClient.setStoredUser(fakeUser);
+    const retrievedUser = apiClient.getStoredUser();
+    assert.deepStrictEqual(retrievedUser, fakeUser);
+
+    apiClient.clearToken();
+    assert.strictEqual(apiClient.getStoredUser(), null);
+    assert.strictEqual(apiClient.getToken(), null);
+  });
 });

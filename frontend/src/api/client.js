@@ -12,6 +12,7 @@ const BASE_URL = (
 class ApiClient {
   constructor() {
     this.tokenKey = 'clario_token';
+    this.userKey = 'clario_user';
   }
 
   getToken() {
@@ -34,11 +35,33 @@ class ApiClient {
     }
   }
 
+  getStoredUser() {
+    try {
+      const stored = localStorage.getItem(this.userKey);
+      return stored ? JSON.parse(stored) : null;
+    } catch {
+      return null;
+    }
+  }
+
+  setStoredUser(user) {
+    try {
+      if (user) {
+        localStorage.setItem(this.userKey, JSON.stringify(user));
+      } else {
+        localStorage.removeItem(this.userKey);
+      }
+    } catch (e) {
+      console.warn('Failed to access localStorage:', e);
+    }
+  }
+
   clearToken() {
     try {
       localStorage.removeItem(this.tokenKey);
+      localStorage.removeItem(this.userKey);
     } catch (e) {
-      console.warn('Failed to remove token from localStorage:', e);
+      console.warn('Failed to remove token and user from localStorage:', e);
     }
   }
 
@@ -113,6 +136,9 @@ class ApiClient {
     });
     if (data && data.access_token) {
       this.setToken(data.access_token);
+      if (data.user) {
+        this.setStoredUser(data.user);
+      }
     }
     return data;
   }
@@ -124,6 +150,9 @@ class ApiClient {
     });
     if (data && data.access_token) {
       this.setToken(data.access_token);
+      if (data.user) {
+        this.setStoredUser(data.user);
+      }
     }
     return data;
   }
@@ -159,6 +188,13 @@ class ApiClient {
   async getDocument(documentId) {
     if (!documentId) throw new Error('Document ID is required');
     return this.request(`/api/v1/documents/${documentId}`, {
+      method: 'GET',
+    });
+  }
+
+  async getDocumentChunks(documentId) {
+    if (!documentId) throw new Error('Document ID is required');
+    return this.request(`/api/v1/documents/${documentId}/chunks`, {
       method: 'GET',
     });
   }
