@@ -52,33 +52,7 @@ export const Chat = () => {
   };
 
   const activeConv = conversations.find((c) => c.id === activeConversationId);
-  const rawRole = user?.roles?.[0];
-  const roleName = typeof rawRole === 'object' ? rawRole?.name : rawRole;
-  const userRole = (typeof roleName === 'string' ? roleName : 'user').toLowerCase();
   const roleDepartment = user?.department || 'General';
-
-  // Role-adaptive starter prompts
-  const getPromptSuggestions = () => {
-    if (userRole === 'admin') {
-      return [
-        'What is the annual leave allowance for Clario employees and interns?',
-        'Summarize the corporate information security and VPN access policies.',
-        'What are the compliance and document access classification standards?',
-      ];
-    }
-    if (userRole === 'analyst') {
-      return [
-        'What are the standard operational expense and travel reimbursement procedures?',
-        'Summarize employee benefits, sick days, and vacation policies.',
-        'What are the document retention and compliance guidelines?',
-      ];
-    }
-    return [
-      'What is the annual leave allowance for Clario employees?',
-      'What are the requirements for corporate VPN and credentials?',
-      'How does sick leave policy apply to doctor visits?',
-    ];
-  };
 
   return (
     <div className="chat-page-container">
@@ -136,25 +110,9 @@ export const Chat = () => {
               <div className="brand-icon-box large">C</div>
               <h2>Ask Clario Knowledge Base</h2>
               <p>
-                Ask natural language questions against authorized enterprise documentation.
-                Responses are synthesized from retrieved passages and verified for factual grounding.
+                Ask questions against authorized enterprise documents stored in the database.
+                All responses are synthesized directly from retrieved passages and verified for factual grounding against source documents.
               </p>
-              <div className="prompt-suggestions">
-                <span className="suggestions-title">Recommended for {roleDepartment} ({userRole.toUpperCase()}):</span>
-                {getPromptSuggestions().map((prompt, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    className="suggestion-pill"
-                    onClick={() => {
-                      setInputQuery(prompt);
-                      handleSendMessage(null, prompt);
-                    }}
-                  >
-                    "{prompt}"
-                  </button>
-                ))}
-              </div>
             </div>
           ) : (
             <div className="messages-list">

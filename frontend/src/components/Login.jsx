@@ -33,13 +33,6 @@ export const Login = ({ onSwitchToRegister }) => {
     }
   };
 
-  const handleDemoFill = (demoEmail, demoPassword) => {
-    setEmail(demoEmail);
-    setPassword(demoPassword);
-    setValidationError('');
-    clearError();
-  };
-
   const displayError = validationError || authError;
 
   return (
@@ -171,33 +164,6 @@ export const Login = ({ onSwitchToRegister }) => {
               Register here
             </button>
           </p>
-
-          <div className="quick-access-box">
-            <span className="quick-access-title">Quick Demo Logins</span>
-            <div className="quick-access-buttons">
-              <button
-                type="button"
-                className="btn-pill"
-                onClick={() => handleDemoFill('admin@clario.local', 'AdminSecure123!')}
-              >
-                Admin (IT)
-              </button>
-              <button
-                type="button"
-                className="btn-pill"
-                onClick={() => handleDemoFill('analyst@clario.local', 'AnalystSecure123!')}
-              >
-                Analyst (Operations)
-              </button>
-              <button
-                type="button"
-                className="btn-pill"
-                onClick={() => handleDemoFill('employee@clario.local', 'UserSecure123!')}
-              >
-                User (Engineering)
-              </button>
-            </div>
-          </div>
         </div>
       </div>
     </div>

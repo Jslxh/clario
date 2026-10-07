@@ -4,3 +4,4 @@ export const generateProcessId = (prefix = 'PID') => {
   nextPidCounter += 1;
   return `${prefix}-${nextPidCounter}`;
 };
+
